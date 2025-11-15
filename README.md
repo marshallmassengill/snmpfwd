@@ -45,6 +45,302 @@ $ pip install snmpfwd
 
 Alternatively, you can get it from [GitHub](https://github.com/lextudio/snmpfwd/releases).
 
+Deployment Example
+------------------
+
+### Network Topology
+
+Here's a typical deployment with a Network Management System (NMS) monitoring a device through snmpfwd:
+
+```
+┌─────────────────────┐         ┌─────────────────────┐
+│   NMS (Monitoring   │         │  snmpfwd-server     │
+│      System)        │         │  192.168.1.10       │
+│   10.0.0.50         │         │                     │
+│                     │  SNMP   │  Listens on:        │
+│  - Nagios           │ Request │  :161 (SNMPv2c)     │
+│  - Zabbix           ├────────►│                     │
+│  - Grafana          │         │  Forwards via:      │
+│  - LibreNMS         │ SNMP    │  Encrypted trunk    │
+│                     │◄────────┤  to client          │
+│                     │Response │                     │
+└─────────────────────┘         └──────────┬──────────┘
+                                           │
+       Internet / Firewall                 │ TCP:30301
+       (Encrypted trunk)                   │ (AES encrypted)
+                                           │
+                                ┌──────────▼──────────┐
+                                │  snmpfwd-client     │
+                                │  192.168.100.20     │
+                                │                     │
+                                │  Receives from:     │
+                                │  trunk :30301       │
+                                │                     │
+                                │  Forwards to:       │
+                                │  backend devices    │
+                                └──────────┬──────────┘
+                                           │ SNMP
+                                           │ Request
+                                ┌──────────▼──────────┐
+                                │   Network Device    │
+                                │  (SNMP Agent)       │
+                                │  192.168.100.50     │
+                                │                     │
+                                │  - Router           │
+                                │  - Switch           │
+                                │  - Firewall         │
+                                │  - Server           │
+                                │                     │
+                                │  Responds with      │
+                                │  SNMP data          │
+                                └─────────────────────┘
+```
+
+### IP Address Configuration
+
+#### On the NMS (10.0.0.50)
+
+Configure your monitoring system to query the **snmpfwd-server** address:
+
+```bash
+# Example: Nagios host definition
+define host {
+    host_name       my-router
+    address         192.168.1.10    # snmpfwd-server IP
+    check_command   check_snmp!-C public!sysUpTime.0
+}
+
+# Example: Direct SNMP query
+snmpget -v2c -c public 192.168.1.10 sysUpTime.0
+```
+
+**Important:** Point your NMS to the snmpfwd-server IP (192.168.1.10), NOT the device IP.
+
+#### On snmpfwd-server (192.168.1.10)
+
+Edit `server.conf`:
+
+```
+snmp-credentials-group {
+  # Listen for SNMP requests from NMS
+  snmp-bind-address: 0.0.0.0:161
+  # Or bind to specific interface: 192.168.1.10:161
+
+  snmp-community-name: public
+  snmp-security-model: 2  # SNMPv2c
+}
+
+trunking-group {
+  # Local address for trunk (optional, 0.0.0.0 for any interface)
+  trunk-bind-address: 0.0.0.0
+
+  # Connect to snmpfwd-client
+  trunk-peer-address: 192.168.100.20:30301
+
+  trunk-connection-mode: client
+}
+```
+
+**Key addresses:**
+- `snmp-bind-address`: Where NMS sends requests (192.168.1.10:161)
+- `trunk-peer-address`: Where snmpfwd-client is located (192.168.100.20:30301)
+
+#### On snmpfwd-client (192.168.100.20)
+
+Edit `client.conf`:
+
+```
+peers-group {
+  # Backend device to query
+  snmp-peer-address: 192.168.100.50:161
+
+  snmp-community-name: public
+  snmp-security-model: 2  # SNMPv2c
+}
+
+trunking-group {
+  # Listen for encrypted trunk connections from server
+  trunk-bind-address: 0.0.0.0:30301
+  # Or bind to specific interface: 192.168.100.20:30301
+
+  trunk-connection-mode: server
+}
+```
+
+**Key addresses:**
+- `trunk-bind-address`: Listen for connections from snmpfwd-server (:30301)
+- `snmp-peer-address`: The actual network device to query (192.168.100.50:161)
+
+#### On the Network Device (192.168.100.50)
+
+Configure SNMP agent to accept queries from **snmpfwd-client**:
+
+```bash
+# Example: Linux net-snmp configuration (/etc/snmp/snmpd.conf)
+rocommunity public 192.168.100.20
+
+# Example: Cisco router
+snmp-server community public RO
+```
+
+**Important:** The device sees requests coming from snmpfwd-client IP (192.168.100.20), NOT from NMS.
+
+### Complete Setup Steps
+
+1. **Install snmpfwd on both proxy machines:**
+   ```bash
+   # On server machine (192.168.1.10)
+   pip install snmpfwd
+
+   # On client machine (192.168.100.20)
+   pip install snmpfwd
+   ```
+
+2. **Configure server (192.168.1.10):**
+   ```bash
+   # Edit server.conf
+   # Set snmp-bind-address: 0.0.0.0:161
+   # Set trunk-peer-address: 192.168.100.20:30301
+
+   # Start server
+   snmpfwd-server --config-file=server.conf
+   ```
+
+3. **Configure client (192.168.100.20):**
+   ```bash
+   # Edit client.conf
+   # Set trunk-bind-address: 0.0.0.0:30301
+   # Set snmp-peer-address: 192.168.100.50:161
+
+   # Start client
+   snmpfwd-client --config-file=client.conf
+   ```
+
+4. **Configure NMS (10.0.0.50):**
+   ```bash
+   # Point all SNMP queries to snmpfwd-server
+   # Use IP: 192.168.1.10
+   # Community: public (or whatever is configured)
+   ```
+
+5. **Test the setup:**
+   ```bash
+   # From NMS or any machine
+   snmpget -v2c -c public 192.168.1.10 sysUpTime.0
+   # Should return data from device at 192.168.100.50
+   ```
+
+### Firewall Rules
+
+**On snmpfwd-server (192.168.1.10):**
+- Allow inbound UDP 161 from NMS (10.0.0.50)
+- Allow outbound TCP 30301 to snmpfwd-client (192.168.100.20)
+
+**On snmpfwd-client (192.168.100.20):**
+- Allow inbound TCP 30301 from snmpfwd-server (192.168.1.10)
+- Allow outbound UDP 161 to devices (192.168.100.50)
+
+**On Network Device (192.168.100.50):**
+- Allow inbound UDP 161 from snmpfwd-client (192.168.100.20)
+
+### Common Deployment Scenarios
+
+**Scenario 1: DMZ Deployment**
+- NMS in corporate network (10.0.0.0/8)
+- snmpfwd-server in DMZ (192.168.1.0/24)
+- snmpfwd-client in production network (192.168.100.0/24)
+- Devices in production network (192.168.100.0/24)
+
+**Scenario 2: SNMPv3 Translation**
+- NMS supports only SNMPv3
+- Devices support only SNMPv1/v2c
+- snmpfwd translates between protocols
+- Configure server for SNMPv3, client for SNMPv1/v2c
+
+**Scenario 3: Multiple Devices**
+- One snmpfwd-server receives all NMS queries
+- One snmpfwd-client forwards to multiple backend devices
+- Use routing rules to direct different OIDs/contexts to different devices
+
+**Scenario 4: Single Server Deployment**
+- Both snmpfwd-server and snmpfwd-client run on the same machine
+- Common for protocol translation, testing, or simplified deployments
+- Reduces infrastructure requirements while maintaining flexibility
+
+#### Configuration for Same-Server Deployment
+
+When running both components on the same server (e.g., 192.168.1.10):
+
+**Server configuration (server.conf):**
+```
+snmp-credentials-group {
+  # Listen for SNMP requests from NMS
+  snmp-bind-address: 0.0.0.0:161
+  snmp-community-name: public
+  snmp-security-model: 2
+}
+
+trunking-group {
+  trunk-bind-address: 127.0.0.1
+  # Connect to client on localhost
+  trunk-peer-address: 127.0.0.1:30301
+  trunk-connection-mode: client
+  trunk-id: trunk-1
+}
+```
+
+**Client configuration (client.conf):**
+```
+peers-group {
+  # Backend device to query
+  snmp-peer-address: 192.168.100.50:161
+  snmp-community-name: public
+  snmp-security-model: 2
+  snmp-peer-id: backend-device
+}
+
+trunking-group {
+  # Listen for connections from server on localhost
+  trunk-bind-address: 127.0.0.1:30301
+  trunk-connection-mode: server
+  trunk-id: <discover>
+}
+```
+
+**Key points for same-server deployment:**
+- Use `127.0.0.1` (localhost) for trunk connections between server and client
+- Server listens on `0.0.0.0:161` (or specific interface) for NMS requests
+- Client connects to backend devices via their real IP addresses
+- Both processes can run simultaneously without conflicts
+- The trunk connection stays local, reducing network overhead
+- Still provides benefits like protocol translation and plugin processing
+
+**Starting both components:**
+```bash
+# Start client first (it's the trunk server)
+snmpfwd-client --config-file=/path/to/client.conf &
+
+# Wait a moment for client to start
+sleep 2
+
+# Start server (it connects to client)
+snmpfwd-server --config-file=/path/to/server.conf &
+```
+
+**Benefits of same-server deployment:**
+- ✅ Simplified infrastructure (one server instead of two)
+- ✅ Lower latency for trunk communication
+- ✅ Easier management and monitoring
+- ✅ Still supports protocol translation (SNMPv3 ↔ SNMPv1/v2c)
+- ✅ Plugin processing works identically
+- ✅ Useful for testing and development
+
+**When to use separate servers:**
+- Security requirements (DMZ separation)
+- Geographic distribution
+- High availability with separate failure domains
+- Network segmentation requirements
+
 Known Issues
 ------------
 
