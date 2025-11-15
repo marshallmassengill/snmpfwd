@@ -341,6 +341,363 @@ snmpfwd-server --config-file=/path/to/server.conf &
 - High availability with separate failure domains
 - Network segmentation requirements
 
+### Running as systemd Services
+
+For production deployments on Linux systems, you can run both snmpfwd-server and snmpfwd-client as systemd services. This provides automatic startup, logging, and service management.
+
+#### Installation Steps
+
+**1. Install snmpfwd system-wide:**
+```bash
+# Install using pip (as root or with sudo)
+sudo pip install snmpfwd
+
+# Or using pipx for isolated installation
+sudo apt install pipx  # or your distro's package manager
+sudo pipx install snmpfwd
+```
+
+**2. Create a dedicated user:**
+```bash
+# Create system user for running snmpfwd
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin snmpfwd
+```
+
+**3. Create configuration directories:**
+```bash
+# Create directories for configuration files
+sudo mkdir -p /etc/snmpfwd
+sudo mkdir -p /etc/snmpfwd/plugins
+sudo mkdir -p /var/log/snmpfwd
+
+# Set ownership
+sudo chown -R snmpfwd:snmpfwd /etc/snmpfwd /var/log/snmpfwd
+```
+
+**4. Create configuration files:**
+
+Place your `server.conf` and `client.conf` in `/etc/snmpfwd/`:
+
+```bash
+# Example: Copy from your working configuration
+sudo cp server.conf /etc/snmpfwd/
+sudo cp client.conf /etc/snmpfwd/
+sudo cp -r plugins/* /etc/snmpfwd/plugins/
+
+# Set permissions
+sudo chown -R snmpfwd:snmpfwd /etc/snmpfwd
+sudo chmod 640 /etc/snmpfwd/*.conf
+```
+
+**5. Create systemd service files:**
+
+**Client Service** (`/etc/systemd/system/snmpfwd-client.service`):
+```ini
+[Unit]
+Description=SNMP Proxy Forwarder Client
+Documentation=https://github.com/lextudio/snmpfwd
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=snmpfwd
+Group=snmpfwd
+
+# Start the client
+ExecStart=/usr/local/bin/snmpfwd-client \
+    --config-file=/etc/snmpfwd/client.conf \
+    --log-level=info
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=snmpfwd-client
+
+# Restart policy
+Restart=on-failure
+RestartSec=5s
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log/snmpfwd
+
+[Install]
+WantedBy=multi-user.target
+```
+
+**Server Service** (`/etc/systemd/system/snmpfwd-server.service`):
+```ini
+[Unit]
+Description=SNMP Proxy Forwarder Server
+Documentation=https://github.com/lextudio/snmpfwd
+After=network.target snmpfwd-client.service
+Wants=network-online.target
+Requires=snmpfwd-client.service
+
+[Service]
+Type=simple
+User=snmpfwd
+Group=snmpfwd
+
+# Start the server (waits for client to be ready)
+ExecStartPre=/bin/sleep 2
+ExecStart=/usr/local/bin/snmpfwd-server \
+    --config-file=/etc/snmpfwd/server.conf \
+    --log-level=info
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=snmpfwd-server
+
+# Restart policy
+Restart=on-failure
+RestartSec=5s
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log/snmpfwd
+
+# Allow binding to privileged port 161
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target
+```
+
+**6. Set correct permissions for service files:**
+```bash
+sudo chmod 644 /etc/systemd/system/snmpfwd-client.service
+sudo chmod 644 /etc/systemd/system/snmpfwd-server.service
+```
+
+#### Managing the Services
+
+**Enable services to start on boot:**
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable snmpfwd-client.service
+sudo systemctl enable snmpfwd-server.service
+```
+
+**Start the services:**
+```bash
+# Start client first (it's the trunk server)
+sudo systemctl start snmpfwd-client
+
+# Wait a moment, then start server
+sleep 2
+sudo systemctl start snmpfwd-server
+```
+
+**Check status:**
+```bash
+# Check if services are running
+sudo systemctl status snmpfwd-client
+sudo systemctl status snmpfwd-server
+
+# Brief status check
+sudo systemctl is-active snmpfwd-client snmpfwd-server
+```
+
+**View logs:**
+```bash
+# Follow logs in real-time
+sudo journalctl -u snmpfwd-client -f
+sudo journalctl -u snmpfwd-server -f
+
+# View recent logs
+sudo journalctl -u snmpfwd-client -n 50
+sudo journalctl -u snmpfwd-server -n 50
+
+# View logs for both services
+sudo journalctl -u snmpfwd-client -u snmpfwd-server -f
+```
+
+**Restart services:**
+```bash
+# Restart both services
+sudo systemctl restart snmpfwd-client
+sleep 2
+sudo systemctl restart snmpfwd-server
+
+# Or restart together
+sudo systemctl restart snmpfwd-client snmpfwd-server
+```
+
+**Stop services:**
+```bash
+# Stop server first, then client
+sudo systemctl stop snmpfwd-server
+sudo systemctl stop snmpfwd-client
+```
+
+#### Configuration File Paths
+
+When running as systemd services, use these standard paths:
+
+| File | Location |
+|------|----------|
+| Server config | `/etc/snmpfwd/server.conf` |
+| Client config | `/etc/snmpfwd/client.conf` |
+| Plugin configs | `/etc/snmpfwd/plugins/*.conf` |
+| Plugin modules | `/etc/snmpfwd/plugins/*.py` or system Python path |
+| Log files | `/var/log/snmpfwd/` (if file logging enabled) |
+| Journal logs | `journalctl -u snmpfwd-{client,server}` |
+
+#### Binding to Privileged Ports
+
+SNMP typically uses UDP port 161, which is a privileged port (< 1024). The systemd service files use `AmbientCapabilities=CAP_NET_BIND_SERVICE` to allow the non-root `snmpfwd` user to bind to this port.
+
+**Alternative: Use a non-privileged port**
+
+If you prefer not to use privileged ports, configure the server to listen on a high port:
+
+```
+# In server.conf
+snmp-bind-address: 0.0.0.0:1161
+```
+
+Then configure your NMS to query port 1161 instead of 161. Remove the `AmbientCapabilities` line from the service file.
+
+#### Troubleshooting
+
+**Service won't start:**
+```bash
+# Check detailed error messages
+sudo journalctl -xe -u snmpfwd-client
+sudo journalctl -xe -u snmpfwd-server
+
+# Check configuration syntax
+snmpfwd-client --config-file=/etc/snmpfwd/client.conf --validate
+snmpfwd-server --config-file=/etc/snmpfwd/server.conf --validate
+```
+
+**Permission issues:**
+```bash
+# Ensure snmpfwd user owns configuration files
+sudo chown -R snmpfwd:snmpfwd /etc/snmpfwd
+sudo chmod 750 /etc/snmpfwd
+sudo chmod 640 /etc/snmpfwd/*.conf
+```
+
+**Port binding issues:**
+```bash
+# Check if port 161 is already in use
+sudo netstat -ulnp | grep :161
+sudo ss -ulnp | grep :161
+
+# Check if service has CAP_NET_BIND_SERVICE capability
+sudo systemctl show snmpfwd-server | grep AmbientCapabilities
+```
+
+**Trunk connection issues:**
+```bash
+# Check if client is listening on trunk port
+sudo netstat -tlnp | grep :30301
+sudo ss -tlnp | grep :30301
+
+# Check both services are running
+sudo systemctl status snmpfwd-client snmpfwd-server
+```
+
+#### Security Hardening
+
+The provided service files include several security features:
+
+- **NoNewPrivileges**: Prevents privilege escalation
+- **PrivateTmp**: Isolates /tmp directory
+- **ProtectSystem**: Makes most of the filesystem read-only
+- **ProtectHome**: Makes /home inaccessible
+- **ReadWritePaths**: Explicitly allows writing to log directory
+- **Dedicated user**: Runs as unprivileged `snmpfwd` user
+- **Minimal capabilities**: Only CAP_NET_BIND_SERVICE when needed
+
+#### Example: Complete Setup Script
+
+```bash
+#!/bin/bash
+# Complete setup script for snmpfwd systemd services
+
+set -e
+
+echo "Installing snmpfwd..."
+sudo pip install snmpfwd
+
+echo "Creating snmpfwd user..."
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin snmpfwd 2>/dev/null || true
+
+echo "Creating directories..."
+sudo mkdir -p /etc/snmpfwd/plugins
+sudo mkdir -p /var/log/snmpfwd
+
+echo "Copying configuration files..."
+sudo cp server.conf /etc/snmpfwd/
+sudo cp client.conf /etc/snmpfwd/
+sudo cp -r plugins/* /etc/snmpfwd/plugins/ 2>/dev/null || true
+
+echo "Setting permissions..."
+sudo chown -R snmpfwd:snmpfwd /etc/snmpfwd /var/log/snmpfwd
+sudo chmod 750 /etc/snmpfwd
+sudo chmod 640 /etc/snmpfwd/*.conf
+
+echo "Creating systemd service files..."
+sudo tee /etc/systemd/system/snmpfwd-client.service > /dev/null << 'EOF'
+[Unit]
+Description=SNMP Proxy Forwarder Client
+After=network.target
+[Service]
+Type=simple
+User=snmpfwd
+ExecStart=/usr/local/bin/snmpfwd-client --config-file=/etc/snmpfwd/client.conf --log-level=info
+Restart=on-failure
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo tee /etc/systemd/system/snmpfwd-server.service > /dev/null << 'EOF'
+[Unit]
+Description=SNMP Proxy Forwarder Server
+After=network.target snmpfwd-client.service
+Requires=snmpfwd-client.service
+[Service]
+Type=simple
+User=snmpfwd
+ExecStartPre=/bin/sleep 2
+ExecStart=/usr/local/bin/snmpfwd-server --config-file=/etc/snmpfwd/server.conf --log-level=info
+Restart=on-failure
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+[Install]
+WantedBy=multi-user.target
+EOF
+
+echo "Reloading systemd..."
+sudo systemctl daemon-reload
+
+echo "Enabling services..."
+sudo systemctl enable snmpfwd-client snmpfwd-server
+
+echo "Starting services..."
+sudo systemctl start snmpfwd-client
+sleep 2
+sudo systemctl start snmpfwd-server
+
+echo "Checking status..."
+sudo systemctl status snmpfwd-client --no-pager
+sudo systemctl status snmpfwd-server --no-pager
+
+echo ""
+echo "Setup complete!"
+echo "View logs with: sudo journalctl -u snmpfwd-client -u snmpfwd-server -f"
+```
+
 Known Issues
 ------------
 
