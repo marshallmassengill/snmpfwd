@@ -16,16 +16,16 @@ from pysnmp.error import PySnmpError
 from pysnmp.entity import engine, config
 from pysnmp.entity.rfc3413 import config as lcd
 from pysnmp.entity.rfc3413 import cmdgen, ntforg, context
-from pysnmp.carrier.asynsock.dgram import udp
+from pysnmp.carrier.asyncore.dgram import udp
 try:
-    from pysnmp.carrier.asynsock.dgram import udp6
+    from pysnmp.carrier.asyncore.dgram import udp6
 except ImportError:
     udp6 = None
 try:
-    from pysnmp.carrier.asynsock.dgram import unix
+    from pysnmp.carrier.asyncore.dgram import unix
 except ImportError:
     unix = None
-from pysnmp.carrier.asynsock.dispatch import AsynsockDispatcher
+from pysnmp.carrier.asyncore.dispatch import AsyncoreDispatcher
 from pysnmp.proto import rfc1157, rfc1902, rfc1905, rfc3411
 from pysnmp.proto.api import v2c
 from pyasn1 import debug as pyasn1_debug
@@ -532,7 +532,7 @@ Software documentation and support at https://www.pysnmp.com/snmpfwd/
 
     notificationOriginator = ntforg.NotificationOriginator()
 
-    transportDispatcher = AsynsockDispatcher()
+    transportDispatcher = AsyncoreDispatcher()
     transportDispatcher.registerRoutingCbFun(lambda td, t, d: td)
     transportDispatcher.setSocketMap()  # use global asyncore socket map
 

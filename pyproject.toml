@@ -32,6 +32,8 @@ include = ["docs", "tests", "examples"]
 python = "^3.8"
 pycryptodomex = "^3.23.0"
 pysnmp-lextudio = ">=5.0.0,<6.0.0"
+pyasn1 = "0.5.1"
+pysmi-lextudio = ">=1.1.0,<2.0.0"
 
 [tool.poetry.dev-dependencies]
 codecov = "^2.1.12"
