@@ -345,16 +345,167 @@ snmpfwd-server --config-file=/path/to/server.conf &
 
 For production deployments on Linux systems, you can run both snmpfwd-server and snmpfwd-client as systemd services. This provides automatic startup, logging, and service management.
 
+#### Prerequisites
+
+**Python Version Requirements:**
+- **Python 3.8 or higher** (tested with Python 3.11)
+- **pip** or **pipx** for package installation
+- **virtualenv** (optional but recommended for isolated installation)
+
+#### Python and Dependency Setup
+
+**Option 1: System-wide Installation (Simple)**
+
+**1a. Install Python and dependencies (Ubuntu/Debian):**
+```bash
+# Update package list
+sudo apt update
+
+# Install Python 3.11 (or latest available)
+sudo apt install -y python3.11 python3.11-venv python3-pip
+
+# Install system dependencies for cryptography
+sudo apt install -y build-essential libssl-dev libffi-dev python3-dev
+
+# Upgrade pip
+sudo pip3 install --upgrade pip
+```
+
+**1b. Install Python and dependencies (RHEL/CentOS/Rocky):**
+```bash
+# Enable EPEL repository (if needed)
+sudo dnf install -y epel-release
+
+# Install Python 3.11
+sudo dnf install -y python3.11 python3.11-pip python3.11-devel
+
+# Install build dependencies
+sudo dnf install -y gcc openssl-devel libffi-devel
+
+# Upgrade pip
+sudo pip3.11 install --upgrade pip
+```
+
+**1c. Install Python and dependencies (openSUSE):**
+```bash
+# Install Python 3.11
+sudo zypper install -y python311 python311-pip python311-devel
+
+# Install build dependencies
+sudo zypper install -y gcc libopenssl-devel libffi-devel
+
+# Upgrade pip
+sudo pip3.11 install --upgrade pip
+```
+
+**Option 2: Virtual Environment Installation (Recommended for Production)**
+
+This approach isolates snmpfwd dependencies from system Python packages.
+
+**2a. Set up virtual environment:**
+```bash
+# Install Python 3.11 and venv (Ubuntu/Debian example)
+sudo apt update
+sudo apt install -y python3.11 python3.11-venv python3-pip build-essential
+
+# Create directory for the virtual environment
+sudo mkdir -p /opt/snmpfwd
+cd /opt/snmpfwd
+
+# Create virtual environment
+sudo python3.11 -m venv venv
+
+# Activate virtual environment
+source venv/bin/activate
+
+# Upgrade pip in virtual environment
+pip install --upgrade pip
+
+# Install snmpfwd and dependencies
+pip install snmpfwd
+
+# Verify installation
+which snmpfwd-server  # Should show /opt/snmpfwd/venv/bin/snmpfwd-server
+snmpfwd-server --version
+
+# Deactivate when done
+deactivate
+```
+
+**2b. Set ownership:**
+```bash
+# Create snmpfwd user (if not exists)
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin snmpfwd
+
+# Set ownership of virtual environment
+sudo chown -R snmpfwd:snmpfwd /opt/snmpfwd
+```
+
+#### Verify Python Dependencies
+
+After installation, verify that all required dependencies are installed:
+
+```bash
+# If using virtual environment
+source /opt/snmpfwd/venv/bin/activate
+
+# If using system-wide installation
+# (no activation needed)
+
+# Check installed packages
+pip list | grep -E "pysnmp|pyasn1|pycrypto"
+
+# Expected output should include:
+# pysnmp-lextudio   5.x.x
+# pyasn1            0.5.1
+# pycryptodomex     3.x.x
+# pysmi-lextudio    1.x.x (if needed for MIB compilation)
+
+# Test import
+python3 -c "from pysnmp.hlapi import *; print('pysnmp OK')"
+python3 -c "from pysnmp.carrier.asyncore.dgram import udp; print('asyncore OK')"
+python3 -c "from Cryptodome.Cipher import AES; print('crypto OK')"
+```
+
 #### Installation Steps
 
-**1. Install snmpfwd system-wide:**
-```bash
-# Install using pip (as root or with sudo)
-sudo pip install snmpfwd
+**1. Install snmpfwd:**
 
-# Or using pipx for isolated installation
-sudo apt install pipx  # or your distro's package manager
+**Option A: System-wide installation:**
+```bash
+# Install directly with pip
+sudo pip3 install snmpfwd
+
+# Verify installation
+which snmpfwd-server  # Should show /usr/local/bin/snmpfwd-server
+snmpfwd-server --version
+```
+
+**Option B: Virtual environment installation (recommended):**
+```bash
+# Already done in "Python and Dependency Setup" above
+# Just verify the installation
+/opt/snmpfwd/venv/bin/snmpfwd-server --version
+```
+
+**Option C: Using pipx (isolated, system-wide commands):**
+```bash
+# Install pipx
+sudo apt install pipx  # Ubuntu/Debian
+# OR
+sudo dnf install pipx  # RHEL/Rocky
+# OR
+sudo pip3 install pipx
+
+# Ensure pipx path is configured
+pipx ensurepath
+
+# Install snmpfwd
 sudo pipx install snmpfwd
+
+# Verify
+which snmpfwd-server
+snmpfwd-server --version
 ```
 
 **2. Create a dedicated user:**
@@ -391,6 +542,10 @@ sudo chmod 640 /etc/snmpfwd/*.conf
 
 **5. Create systemd service files:**
 
+Choose the appropriate service files based on your installation method:
+
+**For System-wide Installation:**
+
 **Client Service** (`/etc/systemd/system/snmpfwd-client.service`):
 ```ini
 [Unit]
@@ -404,7 +559,7 @@ Type=simple
 User=snmpfwd
 Group=snmpfwd
 
-# Start the client
+# Start the client (system-wide installation path)
 ExecStart=/usr/local/bin/snmpfwd-client \
     --config-file=/etc/snmpfwd/client.conf \
     --log-level=info
@@ -471,6 +626,97 @@ AmbientCapabilities=CAP_NET_BIND_SERVICE
 [Install]
 WantedBy=multi-user.target
 ```
+
+**For Virtual Environment Installation (Recommended):**
+
+**Client Service** (`/etc/systemd/system/snmpfwd-client.service`):
+```ini
+[Unit]
+Description=SNMP Proxy Forwarder Client
+Documentation=https://github.com/lextudio/snmpfwd
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=snmpfwd
+Group=snmpfwd
+WorkingDirectory=/opt/snmpfwd
+
+# Use virtual environment Python
+ExecStart=/opt/snmpfwd/venv/bin/snmpfwd-client \
+    --config-file=/etc/snmpfwd/client.conf \
+    --log-level=info
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=snmpfwd-client
+
+# Restart policy
+Restart=on-failure
+RestartSec=5s
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log/snmpfwd /opt/snmpfwd
+
+[Install]
+WantedBy=multi-user.target
+```
+
+**Server Service** (`/etc/systemd/system/snmpfwd-server.service`):
+```ini
+[Unit]
+Description=SNMP Proxy Forwarder Server
+Documentation=https://github.com/lextudio/snmpfwd
+After=network.target snmpfwd-client.service
+Wants=network-online.target
+Requires=snmpfwd-client.service
+
+[Service]
+Type=simple
+User=snmpfwd
+Group=snmpfwd
+WorkingDirectory=/opt/snmpfwd
+
+# Start the server (waits for client to be ready)
+ExecStartPre=/bin/sleep 2
+ExecStart=/opt/snmpfwd/venv/bin/snmpfwd-server \
+    --config-file=/etc/snmpfwd/server.conf \
+    --log-level=info
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=snmpfwd-server
+
+# Restart policy
+Restart=on-failure
+RestartSec=5s
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log/snmpfwd /opt/snmpfwd
+
+# Allow binding to privileged port 161
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target
+```
+
+**Important Notes:**
+- For virtual environment installations, use `/opt/snmpfwd/venv/bin/snmpfwd-{client,server}`
+- For system-wide installations, use `/usr/local/bin/snmpfwd-{client,server}` (or check `which snmpfwd-server`)
+- The virtual environment version includes `ReadWritePaths=/opt/snmpfwd` to allow access to the venv
+- Ensure the `snmpfwd` user owns `/opt/snmpfwd` for virtual environment installations
 
 **6. Set correct permissions for service files:**
 ```bash
@@ -620,44 +866,187 @@ The provided service files include several security features:
 - **Dedicated user**: Runs as unprivileged `snmpfwd` user
 - **Minimal capabilities**: Only CAP_NET_BIND_SERVICE when needed
 
-#### Example: Complete Setup Script
+#### Example: Complete Setup Scripts
+
+**Script 1: Virtual Environment Installation (Recommended)**
 
 ```bash
 #!/bin/bash
-# Complete setup script for snmpfwd systemd services
+# Complete setup script for snmpfwd systemd services with virtual environment
+# For Ubuntu/Debian systems - adjust package names for other distros
 
 set -e
 
-echo "Installing snmpfwd..."
-sudo pip install snmpfwd
+echo "=== Installing Python and dependencies ==="
+sudo apt update
+sudo apt install -y python3.11 python3.11-venv python3-pip build-essential \
+    libssl-dev libffi-dev python3-dev
 
-echo "Creating snmpfwd user..."
+echo "=== Creating snmpfwd user ==="
 sudo useradd --system --no-create-home --shell /usr/sbin/nologin snmpfwd 2>/dev/null || true
 
-echo "Creating directories..."
+echo "=== Creating virtual environment ==="
+sudo mkdir -p /opt/snmpfwd
+cd /opt/snmpfwd
+sudo python3.11 -m venv venv
+
+echo "=== Installing snmpfwd in virtual environment ==="
+sudo /opt/snmpfwd/venv/bin/pip install --upgrade pip
+sudo /opt/snmpfwd/venv/bin/pip install snmpfwd
+
+echo "=== Verifying installation ==="
+/opt/snmpfwd/venv/bin/snmpfwd-server --version
+
+echo "=== Creating configuration directories ==="
 sudo mkdir -p /etc/snmpfwd/plugins
 sudo mkdir -p /var/log/snmpfwd
 
-echo "Copying configuration files..."
-sudo cp server.conf /etc/snmpfwd/
-sudo cp client.conf /etc/snmpfwd/
-sudo cp -r plugins/* /etc/snmpfwd/plugins/ 2>/dev/null || true
+echo "=== Copying configuration files ==="
+# Adjust paths to your actual config files
+sudo cp server.conf /etc/snmpfwd/ 2>/dev/null || echo "Note: server.conf not found in current directory"
+sudo cp client.conf /etc/snmpfwd/ 2>/dev/null || echo "Note: client.conf not found in current directory"
+sudo cp -r plugins/* /etc/snmpfwd/plugins/ 2>/dev/null || echo "Note: plugins directory not found"
 
-echo "Setting permissions..."
+echo "=== Setting permissions ==="
+sudo chown -R snmpfwd:snmpfwd /opt/snmpfwd /etc/snmpfwd /var/log/snmpfwd
+sudo chmod 750 /etc/snmpfwd
+sudo chmod 640 /etc/snmpfwd/*.conf 2>/dev/null || true
+
+echo "=== Creating systemd service files ==="
+sudo tee /etc/systemd/system/snmpfwd-client.service > /dev/null << 'EOF'
+[Unit]
+Description=SNMP Proxy Forwarder Client
+Documentation=https://github.com/lextudio/snmpfwd
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=snmpfwd
+Group=snmpfwd
+WorkingDirectory=/opt/snmpfwd
+ExecStart=/opt/snmpfwd/venv/bin/snmpfwd-client --config-file=/etc/snmpfwd/client.conf --log-level=info
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=snmpfwd-client
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log/snmpfwd /opt/snmpfwd
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo tee /etc/systemd/system/snmpfwd-server.service > /dev/null << 'EOF'
+[Unit]
+Description=SNMP Proxy Forwarder Server
+Documentation=https://github.com/lextudio/snmpfwd
+After=network.target snmpfwd-client.service
+Wants=network-online.target
+Requires=snmpfwd-client.service
+
+[Service]
+Type=simple
+User=snmpfwd
+Group=snmpfwd
+WorkingDirectory=/opt/snmpfwd
+ExecStartPre=/bin/sleep 2
+ExecStart=/opt/snmpfwd/venv/bin/snmpfwd-server --config-file=/etc/snmpfwd/server.conf --log-level=info
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=snmpfwd-server
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log/snmpfwd /opt/snmpfwd
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+echo "=== Reloading systemd ==="
+sudo systemctl daemon-reload
+
+echo "=== Enabling services ==="
+sudo systemctl enable snmpfwd-client snmpfwd-server
+
+echo "=== Starting services ==="
+sudo systemctl start snmpfwd-client
+sleep 3
+sudo systemctl start snmpfwd-server
+
+echo "=== Checking status ==="
+sudo systemctl status snmpfwd-client --no-pager || true
+echo ""
+sudo systemctl status snmpfwd-server --no-pager || true
+
+echo ""
+echo "=== Setup complete! ==="
+echo "View logs with: sudo journalctl -u snmpfwd-client -u snmpfwd-server -f"
+echo "Check dependencies: /opt/snmpfwd/venv/bin/pip list | grep -E 'pysnmp|pyasn1|pycrypto'"
+```
+
+**Script 2: System-wide Installation (Simple)**
+
+```bash
+#!/bin/bash
+# Simple system-wide installation for snmpfwd systemd services
+# For Ubuntu/Debian systems - adjust package names for other distros
+
+set -e
+
+echo "=== Installing Python and dependencies ==="
+sudo apt update
+sudo apt install -y python3.11 python3-pip build-essential \
+    libssl-dev libffi-dev python3-dev
+
+echo "=== Upgrading pip ==="
+sudo pip3 install --upgrade pip
+
+echo "=== Installing snmpfwd system-wide ==="
+sudo pip3 install snmpfwd
+
+echo "=== Verifying installation ==="
+which snmpfwd-server
+snmpfwd-server --version
+
+echo "=== Creating snmpfwd user ==="
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin snmpfwd 2>/dev/null || true
+
+echo "=== Creating directories ==="
+sudo mkdir -p /etc/snmpfwd/plugins
+sudo mkdir -p /var/log/snmpfwd
+
+echo "=== Copying configuration files ==="
+sudo cp server.conf /etc/snmpfwd/ 2>/dev/null || echo "Note: server.conf not found"
+sudo cp client.conf /etc/snmpfwd/ 2>/dev/null || echo "Note: client.conf not found"
+sudo cp -r plugins/* /etc/snmpfwd/plugins/ 2>/dev/null || echo "Note: plugins not found"
+
+echo "=== Setting permissions ==="
 sudo chown -R snmpfwd:snmpfwd /etc/snmpfwd /var/log/snmpfwd
 sudo chmod 750 /etc/snmpfwd
-sudo chmod 640 /etc/snmpfwd/*.conf
+sudo chmod 640 /etc/snmpfwd/*.conf 2>/dev/null || true
 
-echo "Creating systemd service files..."
+echo "=== Creating systemd service files ==="
 sudo tee /etc/systemd/system/snmpfwd-client.service > /dev/null << 'EOF'
 [Unit]
 Description=SNMP Proxy Forwarder Client
 After=network.target
+
 [Service]
 Type=simple
 User=snmpfwd
 ExecStart=/usr/local/bin/snmpfwd-client --config-file=/etc/snmpfwd/client.conf --log-level=info
 Restart=on-failure
+
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -667,6 +1056,7 @@ sudo tee /etc/systemd/system/snmpfwd-server.service > /dev/null << 'EOF'
 Description=SNMP Proxy Forwarder Server
 After=network.target snmpfwd-client.service
 Requires=snmpfwd-client.service
+
 [Service]
 Type=simple
 User=snmpfwd
@@ -674,29 +1064,34 @@ ExecStartPre=/bin/sleep 2
 ExecStart=/usr/local/bin/snmpfwd-server --config-file=/etc/snmpfwd/server.conf --log-level=info
 Restart=on-failure
 AmbientCapabilities=CAP_NET_BIND_SERVICE
+
 [Install]
 WantedBy=multi-user.target
 EOF
 
-echo "Reloading systemd..."
+echo "=== Reloading systemd ==="
 sudo systemctl daemon-reload
 
-echo "Enabling services..."
+echo "=== Enabling services ==="
 sudo systemctl enable snmpfwd-client snmpfwd-server
 
-echo "Starting services..."
+echo "=== Starting services ==="
 sudo systemctl start snmpfwd-client
-sleep 2
+sleep 3
 sudo systemctl start snmpfwd-server
 
-echo "Checking status..."
-sudo systemctl status snmpfwd-client --no-pager
-sudo systemctl status snmpfwd-server --no-pager
+echo "=== Checking status ==="
+sudo systemctl status snmpfwd-client --no-pager || true
+echo ""
+sudo systemctl status snmpfwd-server --no-pager || true
 
 echo ""
-echo "Setup complete!"
+echo "=== Setup complete! ==="
 echo "View logs with: sudo journalctl -u snmpfwd-client -u snmpfwd-server -f"
+echo "Check dependencies: pip3 list | grep -E 'pysnmp|pyasn1|pycrypto'"
 ```
+
+Save either script as `setup-snmpfwd.sh`, make it executable with `chmod +x setup-snmpfwd.sh`, and run with `./setup-snmpfwd.sh`.
 
 Known Issues
 ------------
