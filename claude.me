@@ -1,0 +1,266 @@
+# SNMP Proxy Forwarder
+
+## Project Overview
+
+SNMP Proxy Forwarder (snmpfwd) is an application-level SNMP proxy with built-in message routing capabilities. It functions as:
+
+- **SNMP Protocol Translator**: Translates between SNMPv1/v2c/v3 protocols
+- **Application-Level Firewall**: Filters and controls SNMP traffic
+- **Routing Engine**: Flexible PDU forwarding based on configurable rules
+- **Split Client/Server System**: Connected via encrypted TCP trunks
+
+**Primary Use Case**: Enable SNMPv1/v2c devices to communicate with SNMPv3 systems and vice versa, with flexible routing and filtering capabilities.
+
+**Version**: 0.4.5
+**License**: BSD-2-Clause
+**Maintainer**: LeXtudio Inc.
+**Repository**: https://github.com/lextudio/snmpfwd
+
+## Architecture
+
+### Core Components
+
+The project is organized as a split client/server architecture:
+
+1. **snmpfwd-server** (`snmpfwd/scripts/snmpfwdserver.py`, 993 LOC)
+   - Receives SNMP requests from network devices
+   - Routes messages to appropriate trunks based on configuration
+   - Implements `CommandResponder` and `TrapReceiver` classes
+
+2. **snmpfwd-client** (`snmpfwd/scripts/snmpfwdclient.py`, 922 LOC)
+   - Receives messages from trunks
+   - Forwards to backend SNMP devices
+   - Handles command generation and response processing
+
+3. **Trunking Protocol** (`snmpfwd/trunking/`)
+   - Encrypted TCP connection between client and server
+   - AES-CBC encryption with random IV
+   - Binary protocol (v3) using ASN.1 encoding
+   - Asyncore-based event-driven networking
+   - Key modules:
+     - `manager.py` - Connection lifecycle management
+     - `client.py` - TCP client implementation
+     - `server.py` - TCP server listener
+     - `protocol.py` - Message protocol (Request/Response)
+     - `crypto.py` - AES encryption/decryption
+
+4. **Plugin System** (`snmpfwd/plugins/`)
+   - Dynamic plugin loading for PDU filtering/modification
+   - Plugins can return: NEXT, BREAK, DROP, or RESPOND
+   - Loaded from multiple plugin directories
+
+5. **Configuration Parser** (`snmpfwd/cparser.py`, 340 LOC)
+   - Parses declarative configuration DSL
+   - Supports macro expansion with `${variable}` syntax
+   - Pattern matching with regex
+
+## Directory Structure
+
+```
+snmpfwd/
+├── snmpfwd/                    # Main package (21 Python files, ~2,846 LOC)
+│   ├── scripts/                # CLI entry points
+│   │   ├── snmpfwdserver.py   # Server daemon
+│   │   └── snmpfwdclient.py   # Client daemon
+│   ├── trunking/               # Encrypted TCP trunk protocol
+│   ├── plugins/                # Plugin system
+│   ├── cparser.py              # Configuration parser
+│   ├── daemon.py               # Unix daemonization
+│   ├── log.py                  # Logging infrastructure
+│   ├── lazylog.py              # Lazy log string construction
+│   ├── endpoint.py             # Address parsing (IPv4/IPv6)
+│   ├── macro.py                # Config macro expansion
+│   └── error.py                # Custom exceptions
+├── conf/                       # Configuration examples (14 scenarios)
+├── docs/                       # Sphinx documentation
+├── plugins/                    # External plugin directory
+├── tests/                      # Test files
+├── pyproject.toml              # Poetry configuration
+└── poetry.lock                 # Locked dependencies
+```
+
+## Technology Stack
+
+- **Python**: 3.8+ (project uses 3.11)
+- **Core Dependencies**:
+  - `pysnmp` (>=4.4.3) - SNMP protocol implementation
+  - `pycryptodomex`/`pycryptodome` - AES encryption
+  - `pyasn1` - ASN.1 encoding/decoding
+- **Build Tool**: Poetry
+- **Testing**: pytest with codecov
+- **Documentation**: Sphinx with Furo theme
+- **Networking**: asyncore for event-driven sockets
+
+## Configuration System
+
+SNMP Forwarder uses a **declarative mini-language** with configuration groups and routing maps.
+
+### Key Configuration Groups
+
+1. **snmp-credentials-group**: SNMP engine config (v1/v2c/v3, auth/priv protocols)
+2. **context-group**: Pattern matching for context filtering
+3. **content-group**: PDU type and OID prefix filtering
+4. **trunking-group**: Trunk endpoint configuration
+5. **routing-map**: Flexible routing rules with conditional matching
+
+### Configuration Features
+
+- **Pattern Matching**: Regex patterns for contexts, PDU types, OID prefixes
+- **Macro Expansion**: Template variables using `${variable}` syntax
+- **Flexible Routing**: Multiple routing maps with conditional matching
+- **Version**: Current config version is 2
+
+### Example Configuration Files
+
+Located in `/conf/` directory:
+- `command-forwarding-snmpv2c-to-snmpv3/`
+- `command-forwarding-snmpv3-to-snmpv1/`
+- `command-forwarding-snmp-ipv4-to-ipv6/`
+- `trap-forwarding-snmpv3-to-snmpv1/`
+- Many more scenarios demonstrating routing capabilities
+
+## Development Setup
+
+### Installation
+
+```bash
+# Using Poetry (recommended)
+poetry install              # Install all dependencies
+poetry install --no-dev     # Install only runtime dependencies
+
+# Using pip
+pip install -e .            # Development installation
+pip install snmpfwd         # Install from PyPI
+```
+
+### Running Tests
+
+```bash
+poetry run pytest           # Run tests
+poetry run pytest --cov     # Run with coverage
+```
+
+### Building Documentation
+
+```bash
+cd docs/
+poetry run sphinx-build -b html source build/
+```
+
+### Building Package
+
+```bash
+poetry build                # Build distribution
+poetry publish              # Publish to PyPI (maintainers only)
+```
+
+### Entry Points
+
+- `snmpfwd-server` → `snmpfwd.scripts.snmpfwdserver:main`
+- `snmpfwd-client` → `snmpfwd.scripts.snmpfwdclient:main`
+
+## Important Conventions and Patterns
+
+### Code Patterns
+
+1. **Configuration as Code**: Declarative DSL rather than imperative Python
+2. **Plugin Architecture**: Dynamic module loading from plugin directories
+3. **Context Managers**: Unix privilege dropping with `with PrivilegesOf():`
+4. **Lazy Evaluation**: `LazyLogString` for deferred log formatting (performance)
+5. **Pattern Matching**: Regex-based filtering throughout the codebase
+6. **Asyncore**: Event-driven networking for trunk protocol
+7. **Macro Expansion**: Template variable substitution in configs
+
+### Error Handling
+
+- Base exception: `SnmpfwdError`
+- Specific subclasses: `EofError`
+- Extensive error propagation through trunk protocol
+
+### Logging
+
+- Multiple backends: syslog, file, stdout
+- Lazy log string construction for performance
+- Structured logging with context dictionaries
+- Configurable log levels per module
+
+### Unix-Specific Features
+
+- Daemonization with double-fork
+- Privilege dropping to non-root user
+- PID file management
+- Signal handling (SIGTERM, SIGINT, SIGHUP, SIGQUIT)
+
+### Security
+
+- **SNMP Auth Protocols**: MD5, SHA, SHA224, SHA256, SHA384, SHA512
+- **SNMP Privacy Protocols**: DES, 3DES, AES-128/192/256
+- **Trunk Encryption**: AES-CBC with random IV for TCP trunks
+
+## Key Modules Reference
+
+| Module | Purpose | Key Classes/Functions |
+|--------|---------|----------------------|
+| `scripts/snmpfwdserver.py` | Server daemon | `CommandResponder`, `TrapReceiver` |
+| `scripts/snmpfwdclient.py` | Client daemon | Command generators |
+| `cparser.py` | Config parser | `Scanner`, `Parser`, `Config` |
+| `trunking/manager.py` | Trunk lifecycle | `TrunkingManager` |
+| `trunking/protocol.py` | Binary protocol | `Message`, `Request`, `Response` |
+| `trunking/crypto.py` | AES encryption | `AESCipher` |
+| `plugins/manager.py` | Plugin system | `PluginManager` |
+| `daemon.py` | Daemonization | `PrivilegesOf` |
+| `log.py` | Logging | `SyslogLogger`, `FileLogger` |
+| `endpoint.py` | Address parsing | `parseTransportAddress()` |
+| `lazylog.py` | Lazy logging | `LazyLogString` |
+
+## Version Information
+
+- Current version: **0.4.5**
+- Version tracking in:
+  - `snmpfwd/__init__.py`
+  - `docs/source/conf.py`
+- Version bumping: `poetry-bumpversion`
+
+## Project Status
+
+This is a **stable, mature project** with active maintenance:
+- Maintained by LeXtudio Inc. since 2022
+- Originally authored by Ilya Etingof
+- Recent work focuses on:
+  - Dependency updates
+  - CI/CD improvements
+  - Documentation enhancements
+  - Minimal core code changes (stability focus)
+
+## Future Roadmap (TODO.txt)
+
+- Migrate to argparse for CLI parsing
+- Add INFORM forwarding support
+- Auto-reload configuration on changes
+- PDU splitting at content map level
+- Reduce runtime error reporting
+
+## Useful Resources
+
+- **Documentation**: `/docs/` (Sphinx-based)
+- **Examples**: `/conf/` (14 configuration scenarios)
+- **Changes**: `CHANGES.txt` (version history)
+- **License**: `LICENSE.txt` (BSD-2-Clause)
+
+## Working with This Codebase
+
+When making changes:
+
+1. **Configuration Changes**: Start in `/conf/` examples to understand patterns
+2. **Protocol Changes**: Focus on `/snmpfwd/trunking/` for trunk protocol
+3. **Routing Logic**: Review `/snmpfwd/scripts/` for server/client logic
+4. **Plugin Development**: See `/plugins/` and `/snmpfwd/plugins/manager.py`
+5. **Testing**: Add tests in `/tests/` and run with pytest
+6. **Documentation**: Update `/docs/source/` for user-facing changes
+
+### Common Tasks
+
+- **Add new routing rule**: Modify configuration in `/conf/` and test with examples
+- **Extend plugin system**: Create plugin in `/plugins/`, follow existing patterns
+- **Debug trunk protocol**: Enable detailed logging in `log.py`
+- **Add SNMP support**: Extend credential groups in `cparser.py` and server/client scripts
