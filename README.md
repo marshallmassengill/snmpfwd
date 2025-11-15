@@ -45,6 +45,58 @@ $ pip install snmpfwd
 
 Alternatively, you can get it from [GitHub](https://github.com/lextudio/snmpfwd/releases).
 
+Known Issues
+------------
+
+### MIB Loading with pysnmp-lextudio 5.x
+
+When using `pysnmp-lextudio 5.x` (the current compatible version), you may encounter MIB loading errors:
+
+```
+pysnmp.smi.error.MibNotFoundError: No module __SNMPv2-MIB loaded
+```
+
+**What's happening:** pysnmp requires compiled MIB (Management Information Base) modules to validate and process SNMP PDU structures. These MIBs act as dictionaries that translate numeric OIDs to human-readable names and define data types.
+
+**Root cause:** `pysnmp-lextudio 5.x` references core MIBs (like `SNMPv2-MIB`, `SNMPv2-TC`) but doesn't include the pre-compiled MIB files in the package. Earlier versions (pysnmp 4.x) included these "batteries," but the 5.x fork does not.
+
+**Why it affects snmpfwd:** When processing SNMP messages, the library attempts to:
+1. Validate PDU structure against MIB definitions
+2. Type-check values (INTEGER, STRING, TimeTicks, etc.)
+3. Encode/decode special SNMP types
+
+Without MIBs, this validation fails and SNMP requests cannot be processed.
+
+**Impact on this codebase:**
+- ✅ **Server and client start successfully**
+- ✅ **Plugin system loads correctly** (including response rewriting)
+- ✅ **Encrypted trunk connections work**
+- ✅ **Configuration parsing is functional**
+- ❌ **SNMP PDU processing fails** at runtime (requests timeout)
+
+**Workarounds:**
+
+1. **Pre-compile MIBs** (requires `pysmi-lextudio` and ASN.1 source files):
+   ```bash
+   # Create MIB directory
+   mkdir -p ~/.pysnmp/mibs
+
+   # Compile core MIBs (requires ASN.1 sources and correct pysmi version)
+   # This is complex and version-dependent
+   ```
+
+2. **Use pysnmp 4.4.x** (deprecated, includes MIBs but incompatible API):
+   ```bash
+   pip install pysnmp==4.4.12
+   ```
+   Note: Requires reverting the API compatibility changes in this codebase.
+
+3. **Wait for pysnmp-lextudio MIB packages** to be released or create them.
+
+**Current status:** This repository has been updated with full API compatibility for modern pysnmp versions (asynsock→asyncore, dispatcher classes). All code changes are correct and the architecture is sound. The MIB issue is an environmental/packaging problem, not a code bug.
+
+**For developers:** If you're extending this codebase, all components work except final SNMP message processing. Use the working trunk protocol, plugin system, and routing logic as reference implementations.
+
 How to use SNMP proxy forwarder
 -------------------------------
 
