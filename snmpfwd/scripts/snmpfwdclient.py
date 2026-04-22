@@ -24,7 +24,7 @@ from pysnmp.proto import rfc1157, rfc1902, rfc1905, rfc3411
 from pysnmp.proto.api import v2c
 from snmpfwd import macro
 from snmpfwd.error import SnmpfwdError
-from snmpfwd import log, endpoint, bootstrap
+from snmpfwd import log, endpoint, bootstrap, target_override
 from snmpfwd.plugins import status
 from snmpfwd.trunking.manager import TrunkingManager
 from snmpfwd.lazylog import LazyLogString
@@ -158,34 +158,12 @@ def main():
 
         log.debug('received SNMP %s message, forwarded as trunk message #%s' % (errorIndication and 'error' or 'response', msgId), ctx=logCtx)
 
-    #
-    # The following needs proper support in pysnmp. Meanwhile - monkey patching!
-    #
-
-    def makeTargetAddrOverride(targetAddr):
-        endpoints = []
-
-        def getTargetAddr(snmpEngine, snmpTargetAddrName):
-            addrInfo = list(targetAddr(snmpEngine, snmpTargetAddrName))
-
-            if endpoints:
-                peerAddr, bindAddr = endpoints.pop(), endpoints.pop()
-
-                try:
-                    addrInfo[1] = addrInfo[1].__class__(peerAddr).set_local_address(bindAddr)
-
-                except Exception:
-                    raise PySnmpError('failure replacing bind address %s -> %s for transport '
-                                      'domain %s' % (addrInfo[1], bindAddr, addrInfo[0]))
-
-            return addrInfo
-
-        def updateEndpoints(bindAddr, peerAddr):
-            endpoints.extend((bindAddr, peerAddr))
-
-        return getTargetAddr, updateEndpoints
-
-    lcd.get_target_address, updateEndpoints = makeTargetAddrOverride(lcd.get_target_address)
+    # Patch pysnmp so we can rewrite the target bind/peer address per
+    # outbound request (transparent-proxy / virtual-interface modes).
+    # See snmpfwd.target_override for the mechanism.
+    lcd.get_target_address, updateEndpoints = target_override.make_target_addr_override(
+        lcd.get_target_address
+    )
 
     def trunkCbFun(trunkId, msgId, trunkReq):
 
