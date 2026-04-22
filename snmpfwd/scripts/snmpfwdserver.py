@@ -5,12 +5,10 @@
 # Copyright (c) 2014-2019, Ilya Etingof <etingof@gmail.com>
 # License: https://www.pysnmp.com/snmpfwd/license.html
 #
-import os
 import sys
 import traceback
 import random
 import re
-import socket
 from pysnmp.error import PySnmpError
 from pysnmp.entity import engine, config
 from pysnmp.entity.rfc3413 import cmdrsp, ntfrcv, context
@@ -22,15 +20,12 @@ except ImportError:
     udp6 = None
 # UNIX domain SNMP transport has no asyncio carrier equivalent.
 unix = None
-from pysnmp.carrier.asyncio.dispatch import AsyncioDispatcher
 from pysnmp.proto import rfc1157, rfc1902, rfc1905
 from pysnmp.proto.api import v1, v2c
 from snmpfwd.error import SnmpfwdError
-from snmpfwd import log, daemon, cparser, macro, endpoint, cli
-from snmpfwd.plugins.manager import PluginManager
+from snmpfwd import log, macro, endpoint, bootstrap
 from snmpfwd.plugins import status
 from snmpfwd.trunking.manager import TrunkingManager
-from snmpfwd.trunking.endpoint import parseTrunkEndpoint
 from snmpfwd.lazylog import LazyLogString
 
 # Settings
@@ -494,53 +489,29 @@ def main():
     # main script starts here
     #
 
-    parser = cli.build_parser(
-        prog_name=PROGRAM_NAME,
-        default_config_file=CONFIG_FILE,
-        synopsis=(
-            'SNMP Proxy Forwarder: server part. Receives SNMP requests at '
-            'one or many built-in SNMP Agents and routes them to encrypted '
-            "trunks established with Forwarder's Manager part(s) running "
-            'elsewhere. Can implement complex routing logic through '
-            'analyzing parts of SNMP messages and matching them against '
-            'proxy rules.'
-        ),
-    )
-    args = parser.parse_args()
-    cli.apply_debug_flags(args, PROGRAM_NAME)
+    try:
+        args = bootstrap.bootstrap_cli_and_logging(
+            program_name=PROGRAM_NAME,
+            default_config_file=CONFIG_FILE,
+            synopsis=(
+                'SNMP Proxy Forwarder: server part. Receives SNMP requests at '
+                'one or many built-in SNMP Agents and routes them to encrypted '
+                "trunks established with Forwarder's Manager part(s) running "
+                'elsewhere. Can implement complex routing logic through '
+                'analyzing parts of SNMP messages and matching them against '
+                'proxy rules.'
+            ),
+        )
+    except SnmpfwdError:
+        return
 
-    pidFile = args.pid_file
     cfgFile = args.config_file
-    foregroundFlag = not args.daemonize
     procUser = args.process_user
     procGroup = args.process_group
-    loggingMethod = args.logging_method.split(':')
-    loggingLevel = args.log_level
-
-    with daemon.PrivilegesOf(procUser, procGroup):
-
-        try:
-            log.setLogger(PROGRAM_NAME, *loggingMethod, **dict(force=True))
-
-            if loggingLevel:
-                log.setLevel(loggingLevel)
-
-        except SnmpfwdError:
-            sys.stderr.write('%s\r\n%s\r\n' % (sys.exc_info()[1], helpMessage))
-            return
 
     try:
-        cfgTree = cparser.Config().load(cfgFile)
+        cfgTree = bootstrap.load_config(args, PROGRAM_NAME, CONFIG_VERSION)
     except SnmpfwdError:
-        log.error('configuration parsing error: %s' % sys.exc_info()[1])
-        return
-
-    if cfgTree.getAttrValue('program-name', '', default=None) != PROGRAM_NAME:
-        log.error('config file %s does not match program name %s' % (cfgFile, PROGRAM_NAME))
-        return
-
-    if cfgTree.getAttrValue('config-version', '', default=None) != CONFIG_VERSION:
-        log.error('config file %s version is not compatible with program version %s' % (cfgFile, CONFIG_VERSION))
         return
 
     random.seed()
@@ -562,40 +533,14 @@ def main():
     # ourselves inside the observer.
     transportDomainBindAddr = {}
 
-    transportDispatcher = AsyncioDispatcher()
-    transportDispatcher.register_routing_callback(lambda td, t, d: td)
+    transportDispatcher = bootstrap.build_transport_dispatcher()
 
-    #
-    # Initialize plugin modules
-    #
-
-    pluginManager = PluginManager(
-        macro.expandMacros(
-            cfgTree.getAttrValue('plugin-modules-path-list', '', default=[], vector=True),
-            {'config-dir': os.path.dirname(cfgFile)}
-        ),
-        progId=PROGRAM_NAME,
-        apiVer=PLUGIN_API_VERSION
-    )
-
-    for pluginCfgPath in cfgTree.getPathsToAttr('plugin-id'):
-        pluginId = cfgTree.getAttrValue('plugin-id', *pluginCfgPath)
-        pluginMod = cfgTree.getAttrValue('plugin-module', *pluginCfgPath)
-        pluginOptions = macro.expandMacros(
-            cfgTree.getAttrValue('plugin-options', *pluginCfgPath, **dict(default=[], vector=True)),
-            {'config-dir': os.path.dirname(cfgFile)}
+    try:
+        pluginManager = bootstrap.build_plugin_manager(
+            cfgTree, args, PROGRAM_NAME, PLUGIN_API_VERSION,
         )
-
-        log.info('configuring plugin ID %s (at %s) from module %s with options %s...' % (pluginId, '.'.join(pluginCfgPath), pluginMod, ', '.join(pluginOptions) or '<none>'))
-
-        with daemon.PrivilegesOf(procUser, procGroup):
-
-            try:
-                pluginManager.loadPlugin(pluginId, pluginMod, pluginOptions)
-
-            except SnmpfwdError:
-                log.error('plugin %s not loaded: %s' % (pluginId, sys.exc_info()[1]))
-                return
+    except SnmpfwdError:
+        return
 
     for configEntryPath in cfgTree.getPathsToAttr('snmp-credentials-id'):
         credId = cfgTree.getAttrValue('snmp-credentials-id', *configEntryPath)
@@ -884,65 +829,9 @@ def main():
 
     trunkingManager = TrunkingManager(dataCbFun, transportDispatcher.loop)
 
-    for trunkCfgPath in cfgTree.getPathsToAttr('trunk-id'):
-        trunkId = cfgTree.getAttrValue('trunk-id', *trunkCfgPath)
-        secret = cfgTree.getAttrValue('trunk-crypto-key', *trunkCfgPath, **dict(default=''))
-        secret = secret and (secret*((16//len(secret))+1))[:16]
-        log.info('configuring trunk ID %s (at %s)...' % (trunkId, '.'.join(trunkCfgPath)))
-        connectionMode = cfgTree.getAttrValue('trunk-connection-mode', *trunkCfgPath)
-        if connectionMode == 'client':
-            trunkingManager.addClient(
-                trunkId,
-                parseTrunkEndpoint(cfgTree.getAttrValue('trunk-bind-address', *trunkCfgPath)),
-                parseTrunkEndpoint(cfgTree.getAttrValue('trunk-peer-address', *trunkCfgPath), 30201),
-                cfgTree.getAttrValue('trunk-ping-period', *trunkCfgPath, default=0, expect=int),
-                secret
-            )
-            log.info('new trunking client from %s to %s' % (cfgTree.getAttrValue('trunk-bind-address', *trunkCfgPath), cfgTree.getAttrValue('trunk-peer-address', *trunkCfgPath)))
-        if connectionMode == 'server':
-            trunkingManager.addServer(
-                parseTrunkEndpoint(cfgTree.getAttrValue('trunk-bind-address', *trunkCfgPath), 30201),
-                cfgTree.getAttrValue('trunk-ping-period', *trunkCfgPath, default=0, expect=int),
-                secret
-            )
-            log.info('new trunking server at %s' % (cfgTree.getAttrValue('trunk-bind-address', *trunkCfgPath)))
-
-    transportDispatcher.register_timer_callback(
-        trunkingManager.setupTrunks, random.randrange(1, 5)
-    )
-    transportDispatcher.register_timer_callback(
-        trunkingManager.monitorTrunks, random.randrange(1, 5)
-    )
-
-    if not foregroundFlag:
-        try:
-            daemon.daemonize(pidFile)
-
-        except Exception:
-            log.error('can not daemonize process: %s' % sys.exc_info()[1])
-            return
-
-    # Run mainloop
-
-    log.info('starting I/O engine...')
-
-    transportDispatcher.jobStarted(1)  # server job would never finish
-
-    # Python 2.4 does not support the "finally" clause
-
-    with daemon.PrivilegesOf(procUser, procGroup, final=True):
-
-        while True:
-            try:
-                transportDispatcher.runDispatcher()
-
-            except (PySnmpError, SnmpfwdError, socket.error):
-                log.error(str(sys.exc_info()[1]))
-                continue
-
-            except Exception:
-                transportDispatcher.closeDispatcher()
-                raise
+    bootstrap.configure_trunks(cfgTree, trunkingManager)
+    bootstrap.register_trunk_timers(transportDispatcher, trunkingManager)
+    bootstrap.run_dispatcher_loop(args, transportDispatcher)
 
 
 if __name__ == '__main__':
