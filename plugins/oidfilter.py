@@ -34,7 +34,10 @@ for moduleOption in moduleOptions:
         try:
             configFile = optionValue
 
-            for line in open(configFile).readlines():
+            with open(configFile) as f:
+                configLines = f.readlines()
+
+            for line in configLines:
                 line = line.strip()
 
                 if not line or line.startswith('#'):

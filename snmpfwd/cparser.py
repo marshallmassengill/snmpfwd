@@ -25,7 +25,8 @@ class Scanner(object):
 
     def load(self, filename):
         try:
-            self.lines = open(filename).readlines()
+            with open(filename) as f:
+                self.lines = f.readlines()
         except OSError:
             raise error.SnmpfwdError('cant open config file %s: %s' % (filename, sys.exc_info()[1]))
 

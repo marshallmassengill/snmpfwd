@@ -39,7 +39,8 @@ class PluginManager(object):
                    'moduleContext': {},
                    'moduleOptions': pluginOptions}
 
-            modData = open(modPath).read()
+            with open(modPath) as f:
+                modData = f.read()
 
             try:
                 exec(compile(modData, modPath, 'exec'), ctx)
