@@ -20,3 +20,9 @@ build/
 
 # Virtual envs
 venv*
+
+# Claude Code per-project state
+.claude/
+
+# pytest cache
+.pytest_cache/
