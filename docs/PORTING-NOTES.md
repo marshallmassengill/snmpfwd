@@ -220,3 +220,41 @@ The example config (`command-forwarding-server-classification`) exposes a subtle
 - `/tmp/snmpfwd-0.4.5/` — frozen reference venv (Python 3.11.15 + pysnmp 4.4.12 + pyasn1 0.4.8)
 
 These should remain in place until Step 0.4 integration tests have reproduced all observed baseline behaviors on the modern stack; then can be deleted.
+
+---
+
+# Appendix: gotchas caught during Phase 1 / Phase 2
+
+## `str(OctetString)` on binary pyasn1 values
+
+`str(pyasn1.type.univ.OctetString)` returns the raw bytes reinterpreted as a Python string — not a hex dump, not `prettyPrint()`, not `repr()`. For printable bytes that's fine; for binary bytes it gives you literal control characters embedded in the string.
+
+pysnmp 7 generates SNMPv3 engine-IDs as random OctetStrings. Roughly 1 byte in 43 will be `0x0a` (LF) or `0x0d` (CR). Any regex matching over a string built from `str(engine_id)` will fail on those values because Python's `re.match` treats `.` as "any char except newline" by default — a pattern like `.*?#.*?` (used to match engine-id + context-name in snmpfwd's request classifier) will *silently refuse to match* whenever the engine-id random draw happens to contain a newline-category byte.
+
+Symptom in snmpfwd: tests flake at ~30%, with the server logging `no route configured` and `snmp-context-id=<nil>` — because the context-id regex match-key fell through to `None`.
+
+**Fix:** always pretty-print binary pyasn1 values before building keys for regex matching. Use `x.prettyPrint() if hasattr(x, 'prettyPrint') else str(x)`. That returns a stable `0x01abc...` hex form regardless of which bytes the random draw produced. Applied in `snmpfwdserver.py:requestObserver` and `snmpfwdclient.py:trunkCbFun`, commit `32fabc5`.
+
+## `self.releaseStateInformation` on pysnmp 7's CommandResponderBase
+
+The Phase 1 rename sweep caught every `self.sendPdu` → `self.send_pdu` and most `self.releaseStateInformation` → `self.release_state_information` occurrences, but **one** call on the rarely-exercised "no route configured" error branch was missed. Only surfaced under Phase 2 load once the test matrix grew to 28+ scenarios, with cascading failures because the AttributeError propagated back through `pysnmp.entity.rfc3413.cmdrsp.process_pdu` as an uncaught callback exception. Written up in `32fabc5`.
+
+**Preventive lesson:** when doing a rename sweep across a function body, take one extra pass through every error branch even if it looks obviously covered — those paths are by definition not exercised by the happy-path integration tests.
+
+## pysnmp 7's `process_pdu` auto-releases state at return
+
+In pysnmp 4.x, `CommandResponderBase.process_pdu` invoked `handle_management_operation` and returned — the subclass was responsible for calling `release_state_information` itself once the response had been sent.
+
+pysnmp 7 unconditionally calls `release_state_information` at the *end* of `process_pdu`. That works for synchronous responders but breaks any handler that forwards the request over an async channel and responds later from a callback — which is exactly what snmpfwd does. The stale-state `KeyError` manifests as a traceback through `send_pdu → __pendingReqs[stateReference]` when `trunkCbFun` finally receives the backend's reply.
+
+**Fix:** stash `self._CommandResponderBase__pendingReqs[stateReference]` into a subclass-owned dict on entry to `handle_management_operation`, then re-insert it right before the `send_pdu` call from the async trunk callback. Name-mangled attribute access is ugly but minimal. Landed in `e81a319`. A cleaner upstream fix would be a pysnmp hook to defer the auto-release.
+
+## `AsyncioDispatcher` and transport loop coupling
+
+`pysnmp.carrier.asyncio.dgram.udp.UdpAsyncioTransport()` with no arguments calls `asyncio.get_event_loop()` on construction, which on Python 3.10+ implicitly creates a brand-new loop if none is current. `AsyncioDispatcher` owns its own loop (`dispatcher.loop`) — if the UDP transports each create their own fresh loop, the dispatcher never runs them and packets land in a void.
+
+**Fix:** always pass `loop=transportDispatcher.loop` when constructing UDP transports. The symptom if you don't is packets arriving at the OS socket, no exception, but `handle_management_operation` never being called. Landed in `e81a319`.
+
+## `register_routing_callback` is still required
+
+It looks vestigial (lambda that returns the transport-domain) but the dispatcher uses it to key recv-callables. Dropping it causes `CarrierError: No callback for "None" found - losing incoming event` on the very first packet, with no other symptom. Keep it.

@@ -48,10 +48,10 @@ else:
         except OSError:
             raise error.SnmpfwdError('ERROR: fork #2 failed: %s' % sys.exc_info()[1])
 
-        def signal_cb(s, f):
-            raise KeyboardInterrupt
-        for s in signal.SIGTERM, signal.SIGINT, signal.SIGHUP, signal.SIGQUIT:
-            signal.signal(s, signal_cb)
+        # Signal handlers are installed by bootstrap.run_dispatcher_loop()
+        # after this function returns, using loop.add_signal_handler() —
+        # the raise-during-syscall pattern that used to live here races
+        # with asyncio's event-loop wakeups.
 
         # write pidfile
         def atexit_cb():

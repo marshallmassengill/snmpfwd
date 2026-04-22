@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import os
 import random
+import signal
 import socket
 import sys
 from typing import TYPE_CHECKING, Optional
@@ -223,19 +224,47 @@ def register_trunk_timers(
     )
 
 
+def _install_signal_handlers(loop) -> None:
+    """Wire SIGTERM/SIGINT/SIGHUP/SIGQUIT to stop the event loop.
+
+    Uses loop.add_signal_handler rather than signal.signal so the loop
+    wakes up cleanly — signal.signal delivers to an arbitrary thread
+    during an arbitrary syscall, which races with asyncio's internals.
+    On Windows, where add_signal_handler is NotImplementedError, fall
+    back to signal.signal with a threadsafe loop.stop dispatch."""
+    handled = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP, signal.SIGQUIT)
+    for sig in handled:
+        try:
+            loop.add_signal_handler(sig, loop.stop)
+        except (NotImplementedError, RuntimeError):
+            try:
+                signal.signal(sig, lambda *_: loop.call_soon_threadsafe(loop.stop))
+            except (ValueError, OSError):
+                # Not all signals are available on every platform (e.g.,
+                # SIGHUP / SIGQUIT on Windows). Skip silently.
+                pass
+
+
 def run_dispatcher_loop(
     args: "argparse.Namespace",
     transportDispatcher: AsyncioDispatcher,
 ) -> None:
-    """Daemonize (if requested), drop privileges finally, run the asyncio
-    event loop. Soft-fails on (PySnmpError, SnmpfwdError, socket.error)
-    with a retry; hard exceptions propagate after closing the dispatcher."""
+    """Daemonize (if requested), install signal handlers, drop privileges
+    finally, run the asyncio event loop. Soft-fails on (PySnmpError,
+    SnmpfwdError, socket.error) with a retry; a clean return from
+    runDispatcher() (i.e. loop.stop() fired) is treated as a graceful
+    shutdown and surfaced as KeyboardInterrupt so the outer __main__
+    wrapper logs "shutting down process..." and exits zero."""
     if args.daemonize:
         try:
             daemon.daemonize(args.pid_file)
         except Exception:
             log.error('can not daemonize process: %s' % sys.exc_info()[1])
             raise
+
+    # Must happen after any daemonize() fork so the handlers attach to
+    # the loop in the final child process.
+    _install_signal_handlers(transportDispatcher.loop)
 
     log.info('starting I/O engine...')
     transportDispatcher.jobStarted(1)  # prevent the loop from auto-exiting
@@ -250,3 +279,8 @@ def run_dispatcher_loop(
             except Exception:
                 transportDispatcher.closeDispatcher()
                 raise
+            else:
+                # runDispatcher() returned on its own — the loop was
+                # stopped, presumably by a signal handler. Close cleanly.
+                transportDispatcher.closeDispatcher()
+                raise KeyboardInterrupt
