@@ -182,8 +182,8 @@ def snmp_get(
     community: str,
     oids: Sequence[str],
     version: str = "2c",
-    timeout_secs: float = 2.0,
-    retries: int = 0,
+    timeout_secs: float = 4.0,
+    retries: int = 1,
     numeric: bool = True,
 ) -> List[SnmpVarBind]:
     args = [
@@ -194,14 +194,14 @@ def snmp_get(
         args.append("-On")
     args.append(target)
     args.extend(oids)
-    result = _run_snmp_cli(args, timeout=timeout_secs + 3)
+    result = _run_snmp_cli(args, timeout=timeout_secs * (retries + 1) + 3)
     if result.returncode != 0:
         raise SnmpCliError(result.returncode, result.stderr, result.stdout)
     return _parse_varbinds(result.stdout)
 
 
 def snmp_getnext(*, target: str, community: str, oid: str, version: str = "2c",
-                 timeout_secs: float = 2.0, retries: int = 0,
+                 timeout_secs: float = 4.0, retries: int = 1,
                  numeric: bool = True) -> SnmpVarBind:
     args = [
         "snmpgetnext", f"-v{version}", "-c", community,
@@ -210,7 +210,7 @@ def snmp_getnext(*, target: str, community: str, oid: str, version: str = "2c",
     if numeric:
         args.append("-On")
     args.extend([target, oid])
-    result = _run_snmp_cli(args, timeout=timeout_secs + 3)
+    result = _run_snmp_cli(args, timeout=timeout_secs * (retries + 1) + 3)
     if result.returncode != 0:
         raise SnmpCliError(result.returncode, result.stderr, result.stdout)
     vbs = _parse_varbinds(result.stdout)
@@ -221,7 +221,7 @@ def snmp_getnext(*, target: str, community: str, oid: str, version: str = "2c",
 
 def snmp_bulkget(*, target: str, community: str, oid: str,
                  non_repeaters: int = 0, max_repetitions: int = 10,
-                 timeout_secs: float = 2.0, retries: int = 0,
+                 timeout_secs: float = 4.0, retries: int = 1,
                  numeric: bool = True) -> List[SnmpVarBind]:
     args = [
         "snmpbulkget", "-v2c", "-c", community,
@@ -231,7 +231,7 @@ def snmp_bulkget(*, target: str, community: str, oid: str,
     if numeric:
         args.append("-On")
     args.extend([target, oid])
-    result = _run_snmp_cli(args, timeout=timeout_secs + 3)
+    result = _run_snmp_cli(args, timeout=timeout_secs * (retries + 1) + 3)
     if result.returncode != 0:
         raise SnmpCliError(result.returncode, result.stderr, result.stdout)
     return _parse_varbinds(result.stdout)
@@ -257,7 +257,7 @@ def snmp_trap(*, target: str, community: str, trap_oid: str,
 
 
 def snmp_walk(*, target: str, community: str, oid: str, version: str = "2c",
-              timeout_secs: float = 5.0, retries: int = 0,
+              timeout_secs: float = 5.0, retries: int = 1,
               wall_timeout_secs: float = 60.0,
               numeric: bool = True) -> List[SnmpVarBind]:
     args = [

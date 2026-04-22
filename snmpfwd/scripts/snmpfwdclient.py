@@ -7,7 +7,6 @@
 #
 import os
 import sys
-import getopt
 import traceback
 import random
 import re
@@ -26,11 +25,9 @@ unix = None
 from pysnmp.carrier.asyncio.dispatch import AsyncioDispatcher
 from pysnmp.proto import rfc1157, rfc1902, rfc1905, rfc3411
 from pysnmp.proto.api import v2c
-from pyasn1 import debug as pyasn1_debug
-from pysnmp import debug as pysnmp_debug
 from snmpfwd import macro
 from snmpfwd.error import SnmpfwdError
-from snmpfwd import log, daemon, cparser, endpoint
+from snmpfwd import log, daemon, cparser, endpoint, cli
 from snmpfwd.plugins.manager import PluginManager
 from snmpfwd.plugins import status
 from snmpfwd.trunking.manager import TrunkingManager
@@ -398,93 +395,29 @@ def main():
     # Main script body starts here
     #
 
-    helpMessage = """\
-Usage: %s [--help]
-    [--version ]
-    [--debug-snmp=<%s>]
-    [--debug-asn1=<%s>]
-    [--daemonize]
-    [--process-user=<uname>] [--process-group=<gname>]
-    [--pid-file=<file>]
-    [--logging-method=<%s[:args>]>]
-    [--log-level=<%s>]
-    [--config-file=<file>]""" % (
-            sys.argv[0],
-            '|'.join([x for x in getattr(pysnmp_debug, 'FLAG_MAP', getattr(pysnmp_debug, 'flagMap', ())) if x != 'mibview']),
-            '|'.join([x for x in getattr(pyasn1_debug, 'FLAG_MAP', getattr(pyasn1_debug, 'flagMap', ()))]),
-            '|'.join(log.methodsMap),
-            '|'.join(log.levelsMap)
-        )
-    try:
-        opts, params = getopt.getopt(sys.argv[1:], 'hv', [
-            'help', 'version', 'debug=', 'debug-snmp=', 'debug-asn1=', 'daemonize',
-            'process-user=', 'process-group=', 'pid-file=', 'logging-method=',
-            'log-level=', 'config-file='
-        ])
+    parser = cli.build_parser(
+        prog_name=PROGRAM_NAME,
+        default_config_file=CONFIG_FILE,
+        synopsis=(
+            'SNMP Proxy Forwarder: client part. Receives SNMP PDUs via one '
+            "or many encrypted trunks established with the Forwarder's "
+            'Agent part(s) running elsewhere and routes PDUs to built-in '
+            'SNMP Managers for further transmission towards SNMP Agents. '
+            'Can implement complex routing and protocol conversion logic '
+            'through analyzing parts of SNMP messages and matching them '
+            'against proxying rules.'
+        ),
+    )
+    args = parser.parse_args()
+    cli.apply_debug_flags(args, PROGRAM_NAME)
 
-    except Exception:
-        sys.stderr.write('ERROR: %s\r\n%s\r\n' % (sys.exc_info()[1], helpMessage))
-        return
-
-    if params:
-        sys.stderr.write('ERROR: extra arguments supplied %s\r\n%s\r\n' % (params, helpMessage))
-        return
-
-    pidFile = ''
-    cfgFile = CONFIG_FILE
-    foregroundFlag = True
-    procUser = procGroup = None
-
-    loggingMethod = ['stderr']
-    loggingLevel = None
-
-    for opt in opts:
-        if opt[0] == '-h' or opt[0] == '--help':
-            sys.stderr.write("""\
-Synopsis:
-  SNMP Proxy Forwarder: client part. Receives SNMP PDUs via one or many
-  encrypted trunks established with the Forwarder's Agent part(s) running
-  elsewhere and routes PDUs to built-in SNMP Managers for further
-  transmission towards SNMP Agents.
-  Can implement complex routing and protocol conversion logic through
-  analyzing parts of SNMP messages and matching them against proxying rules.
-
-Documentation:
-  https://www.pysnmp.com/snmpfwd/
-
-%s
-""" % helpMessage)
-            return
-        if opt[0] == '-v' or opt[0] == '--version':
-            import snmpfwd
-            import pysnmp
-            import pyasn1
-            sys.stderr.write("""\
-SNMP Proxy Forwarder version %s, written by Ilya Etingof <etingof@gmail.com>
-Using foundation libraries: pysnmp %s, pyasn1 %s.
-Python interpreter: %s
-Software documentation and support at https://www.pysnmp.com/snmpfwd/
-%s
-""" % (snmpfwd.__version__, hasattr(pysnmp, '__version__') and pysnmp.__version__ or 'unknown', hasattr(pyasn1, '__version__') and pyasn1.__version__ or 'unknown', sys.version, helpMessage))
-            return
-        elif opt[0] == '--debug-snmp':
-            pysnmp_debug.set_logger(pysnmp_debug.Debug(*opt[1].split(','), **dict(loggerName=PROGRAM_NAME + '.pysnmp')))
-        elif opt[0] == '--debug-asn1':
-            pyasn1_debug.setLogger(pyasn1_debug.Debug(*opt[1].split(','), **dict(loggerName=PROGRAM_NAME + '.pyasn1')))
-        elif opt[0] == '--daemonize':
-            foregroundFlag = False
-        elif opt[0] == '--process-user':
-            procUser = opt[1]
-        elif opt[0] == '--process-group':
-            procGroup = opt[1]
-        elif opt[0] == '--pid-file':
-            pidFile = opt[1]
-        elif opt[0] == '--logging-method':
-            loggingMethod = opt[1].split(':')
-        elif opt[0] == '--log-level':
-            loggingLevel = opt[1]
-        elif opt[0] == '--config-file':
-            cfgFile = opt[1]
+    pidFile = args.pid_file
+    cfgFile = args.config_file
+    foregroundFlag = not args.daemonize
+    procUser = args.process_user
+    procGroup = args.process_group
+    loggingMethod = args.logging_method.split(':')
+    loggingLevel = args.log_level
 
     with daemon.PrivilegesOf(procUser, procGroup):
 
