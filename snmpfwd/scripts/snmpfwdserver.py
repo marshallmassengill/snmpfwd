@@ -148,7 +148,7 @@ def main():
             trunkIdList = trunkReq['trunk-id-list']
             if trunkIdList is None:
                 log.error('no route configured', ctx=logCtx)
-                self.releaseStateInformation(stateReference)
+                self.release_state_information(stateReference)
                 return
 
             for trunkId in trunkIdList:
@@ -433,7 +433,14 @@ def main():
             trunkReq
         )
 
-        k = '#'.join([str(x) for x in (variables['contextEngineId'], variables['contextName'])])
+        # Use prettyPrint() rather than str() so binary-valued OctetStrings
+        # (most notably the engine-id) render as stable printable text like
+        # "0x01d68ba0..." — str() on a pyasn1 OctetString returns the raw
+        # bytes, which can include characters such as 0x0a that prevent
+        # `.` from matching in the configured regex.
+        def _text(x):
+            return x.prettyPrint() if hasattr(x, 'prettyPrint') else str(x)
+        k = '#'.join([_text(x) for x in (variables['contextEngineId'], variables['contextName'])])
         for x, y in contextIdList:
             if y.match(k):
                 trunkReq['snmp-context-id'] = macro.expandMacro(x, trunkReq)

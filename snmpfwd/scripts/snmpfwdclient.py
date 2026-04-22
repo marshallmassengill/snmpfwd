@@ -201,15 +201,21 @@ def main():
 
         trunkReq['trunk-id'] = trunkId
 
-        k = [str(x) for x in (trunkReq['server-snmp-engine-id'],
-                              trunkReq['server-snmp-transport-domain'],
-                              trunkReq['server-snmp-peer-address'] + ':' + str(trunkReq['server-snmp-peer-port']),
-                              trunkReq['server-snmp-bind-address'] + ':' + str(trunkReq['server-snmp-bind-port']),
-                              trunkReq['server-snmp-security-model'],
-                              trunkReq['server-snmp-security-level'],
-                              trunkReq['server-snmp-security-name'],
-                              trunkReq['server-snmp-context-engine-id'],
-                              trunkReq['server-snmp-context-name'])]
+        # Use prettyPrint() for binary OctetStrings (engine ids, security
+        # names, etc.) so regex matching is not foiled by raw bytes that
+        # contain characters like 0x0a. See the matching comment in
+        # snmpfwdserver.py's requestObserver.
+        def _text(x):
+            return x.prettyPrint() if hasattr(x, 'prettyPrint') else str(x)
+        k = [_text(x) for x in (trunkReq['server-snmp-engine-id'],
+                                trunkReq['server-snmp-transport-domain'],
+                                trunkReq['server-snmp-peer-address'] + ':' + str(trunkReq['server-snmp-peer-port']),
+                                trunkReq['server-snmp-bind-address'] + ':' + str(trunkReq['server-snmp-bind-port']),
+                                trunkReq['server-snmp-security-model'],
+                                trunkReq['server-snmp-security-level'],
+                                trunkReq['server-snmp-security-name'],
+                                trunkReq['server-snmp-context-engine-id'],
+                                trunkReq['server-snmp-context-name'])]
 
         k.append(snmpPduTypesMap.get(trunkReq['server-snmp-pdu'].tagSet, '?'))
         k.append('|'.join([str(x[0]) for x in v2c.apiPDU.get_varbinds(trunkReq['server-snmp-pdu'])]))
