@@ -226,7 +226,7 @@ context-group {{
 }}
 
 content-group {{
-  snmp-pdu-type-pattern: (TRAPv1|TRAPv2)
+  snmp-pdu-type-pattern: (TRAPv1|TRAPv2|INFORM)
   snmp-pdu-oid-prefix-pattern-list: .*?
 
   snmp-content-id: trap-content
@@ -300,7 +300,7 @@ original-snmp-peer-info-group {{
   orig-snmp-bind-address-pattern: .*?
   orig-snmp-context-name-pattern: .*?
 
-  orig-snmp-pdu-type-pattern: (TRAPv1|TRAPv2)
+  orig-snmp-pdu-type-pattern: (TRAPv1|TRAPv2|INFORM)
   orig-snmp-oid-prefix-pattern: .*?
 
   orig-snmp-engine-id-pattern: .*?

@@ -64,7 +64,8 @@ snmpPduTypesMap = {
   rfc1905.GetBulkRequestPDU.tagSet: 'GETBULK',
   rfc1905.ResponsePDU.tagSet: 'RESPONSE',
   rfc1157.TrapPDU.tagSet: 'TRAPv1',
-  rfc1905.SNMPv2TrapPDU.tagSet: 'TRAPv2'
+  rfc1905.SNMPv2TrapPDU.tagSet: 'TRAPv2',
+  rfc1905.InformRequestPDU.tagSet: 'INFORM',
 }
 
 

@@ -258,3 +258,32 @@ pysnmp 7 unconditionally calls `release_state_information` at the *end* of `proc
 ## `register_routing_callback` is still required
 
 It looks vestigial (lambda that returns the transport-domain) but the dispatcher uses it to key recv-callables. Dropping it causes `CarrierError: No callback for "None" found - losing incoming event` on the very first packet, with no other symptom. Keep it.
+
+---
+
+# Phase 3B — end-to-end INFORM confirmation (design sketch)
+
+Phase 3A ships INFORM forwarding with **immediate ack**: the proxy tells the original INFORM sender "received, will try to forward" the moment a confirmed-class PDU arrives, regardless of whether the downstream eventually acks. That matches how most Unix SNMP proxies behave, but it isn't RFC-strict — the sender may consider an INFORM delivered when it wasn't.
+
+**Phase 3B's goal:** proxy only acks the original INFORM sender *after* the downstream has acked the proxy, so end-to-end delivery is confirmed before the original sender's INFORM is considered complete.
+
+What needs to change, roughly:
+
+1. **Trunk wire protocol.** `Response` message needs to carry the pysnmp-side `errorIndication` (timeout / unreachable / etc.) plus the original-sender's `stateReference` so the server can route the response back. The current Response format has `error-indication` + `snmp-pdu` — likely enough if we also carry a correlation id that keys into the server's pending-INFORM table.
+
+2. **Server side (`snmpfwdserver.py`).** The `NotificationReceiver.process_pdu` override stops calling `super().process_pdu(...)` immediately for CONFIRMED_CLASS PDUs. Instead, it stashes `(stateReference, messageProcessingModel, securityModel, …)` in a per-callflow dict, forwards the INFORM over the trunk, and defers the ack. When `NotificationReceiver.trunkCbFun` fires with the downstream's response, it pops the stashed state and builds the ack from it using the pysnmp-4-style `snmpEngine.msgAndPduDsp.returnResponsePdu(…)` (or the pysnmp-7 equivalent `snmpEngine.message_dispatcher.return_response_pdu(…)`).
+
+3. **Client side (`snmpfwdclient.py`).** Already does the right thing — `notificationOriginator.send_pdu(snmpEngine, peerId, ctxEngineId, ctxName, pdu, snmpCbFun, cbCtx)` fires `snmpCbFun` when the downstream acks or times out, and `snmpCbFun` sends the response over the trunk with `error-indication` populated on failure. No change beyond what's already there.
+
+4. **Timeout handling.** `pysnmp`'s NotificationOriginator has a built-in timeout per target (`snmp-peer-timeout` in our config). If that fires, `snmpCbFun` receives `errorIndication = 'noResponse'` or similar. Decision point: do we ack the sender anyway (optimistic) or NOT ack (strict)? Strict is semantically correct but means the original INFORM sender retries through the proxy — amplifying the load. Optimistic papers over the failure but matches user expectations.
+
+5. **Retry / duplicate handling.** INFORM senders retry if they don't see an ack. With deferred ack, a slow downstream causes multiple proxy-level forwards of the same INFORM. Options: deduplicate on callflow-id (but senders use their own request-ids), deduplicate on sender-addr + request-id, or let duplicates pass through (simplest).
+
+6. **State cleanup.** The pending-INFORM dict on the server needs TTL eviction so runaway senders don't grow it without bound. Keyed by `(peer-address, request-id)` or the pysnmp stateReference.
+
+Testing should extend `test_inform.py` with cases that confirm:
+- downstream ack propagates back to original sender (happy path);
+- downstream timeout → server times out original sender (strict mode) OR acks anyway (optimistic mode);
+- concurrent INFORMs don't cross-mix their pending state.
+
+The Phase 3A implementation is forward-compatible with this design — `NotificationReceiver.process_pdu` already captures everything into `trunkReq` and the trunk protocol already carries `callflow-id`. What's missing is the server-side stash and the trunk-to-ack plumbing in `NotificationReceiver.trunkCbFun` (currently `# TODO: implement response part` and commented out).

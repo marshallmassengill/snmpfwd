@@ -20,7 +20,7 @@ except ImportError:
     udp6 = None
 # UNIX domain SNMP transport has no asyncio carrier equivalent.
 unix = None
-from pysnmp.proto import rfc1157, rfc1902, rfc1905
+from pysnmp.proto import rfc1157, rfc1902, rfc1905, rfc3411
 from pysnmp.proto.api import v1, v2c
 from snmpfwd.error import SnmpfwdError
 from snmpfwd import log, macro, endpoint, bootstrap
@@ -63,8 +63,17 @@ snmpPduTypesMap = {
     rfc1905.GetBulkRequestPDU.tagSet: 'GETBULK',
     rfc1905.ResponsePDU.tagSet: 'RESPONSE',
     rfc1157.TrapPDU.tagSet: 'TRAPv1',
-    rfc1905.SNMPv2TrapPDU.tagSet: 'TRAPv2'
+    rfc1905.SNMPv2TrapPDU.tagSet: 'TRAPv2',
+    rfc1905.InformRequestPDU.tagSet: 'INFORM',
 }
+
+
+def _inform_ack_cb(*args, **kwargs):
+    """No-op callback passed to pysnmp's NotificationReceiver base. pysnmp
+    invokes it after dispatching the INFORM ack Response; snmpfwd does
+    its own trunk-forwarding inside the subclass's process_pdu, so this
+    hook doesn't need to do anything."""
+    pass
 
 
 def main():
@@ -214,13 +223,33 @@ def main():
     #
 
     class NotificationReceiver(ntfrcv.NotificationReceiver):
+        # Include InformRequestPDU so pysnmp dispatches INFORMs to our
+        # process_pdu (the base class's SUPPORTED_PDU_TYPES includes it
+        # but our override narrowed it to TRAPs only).
         SUPPORTED_PDU_TYPES = (rfc1157.TrapPDU.tagSet,
-                               rfc1905.SNMPv2TrapPDU.tagSet)
+                               rfc1905.SNMPv2TrapPDU.tagSet,
+                               rfc1905.InformRequestPDU.tagSet)
 
         def process_pdu(self, snmpEngine, messageProcessingModel,
                         securityModel, securityName, securityLevel,
                         contextEngineId, contextName, pduVersion, pdu,
                         maxSizeResponseScopedPDU, stateReference):
+
+            # For confirmed-class notifications (INFORM) delegate to
+            # pysnmp's base process_pdu first — it builds the Response,
+            # dispatches it back to the original sender via
+            # return_response_pdu(), and then calls our no-op cbFun.
+            # Semantically the proxy's ack means "received, will try to
+            # forward"; end-to-end confirmation (proxy only ack's when
+            # the downstream has ack'd) is deferred to Phase 3B, see
+            # docs/PORTING-NOTES.md.
+            if pdu.tagSet in rfc3411.CONFIRMED_CLASS_PDUS:
+                super().process_pdu(
+                    snmpEngine, messageProcessingModel,
+                    securityModel, securityName, securityLevel,
+                    contextEngineId, contextName, pduVersion, pdu,
+                    maxSizeResponseScopedPDU, stateReference,
+                )
 
             trunkReq = gCurrentRequestContext.copy()
 
@@ -581,7 +610,7 @@ def main():
 
             CommandResponder(snmpEngine, snmpContext)
 
-            NotificationReceiver(snmpEngine, None)
+            NotificationReceiver(snmpEngine, _inform_ack_cb)
 
             engineIdMap[engineId] = snmpEngine, snmpContext, snmpEngineMap
 

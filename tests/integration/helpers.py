@@ -256,6 +256,30 @@ def snmp_trap(*, target: str, community: str, trap_oid: str,
         raise SnmpCliError(result.returncode, result.stderr, result.stdout)
 
 
+def snmp_inform(*, target: str, community: str, trap_oid: str,
+                varbinds: Optional[Sequence[tuple]] = None,
+                version: str = "2c", timeout_secs: float = 5.0,
+                retries: int = 0) -> None:
+    """Send an INFORM via net-snmp's snmpinform CLI. Same arg shape as
+    snmp_trap. Unlike traps, INFORMs wait for a Response ack — if the
+    receiver doesn't ack within the per-request timeout, snmpinform
+    will either retry (retries > 0) or exit non-zero.
+
+    This helper exists to prove the proxy acks INFORM senders; success
+    here (returncode == 0) is the proof that the proxy delivered a
+    Response back to us."""
+    args = [
+        "snmpinform", f"-v{version}", "-c", community,
+        "-t", str(int(timeout_secs)), "-r", str(retries),
+        target, "", trap_oid,
+    ]
+    for (oid, type_letter, value) in (varbinds or ()):
+        args.extend([oid, type_letter, value])
+    result = _run_snmp_cli(args, timeout=timeout_secs * (retries + 1) + 3)
+    if result.returncode != 0:
+        raise SnmpCliError(result.returncode, result.stderr, result.stdout)
+
+
 def snmp_walk(*, target: str, community: str, oid: str, version: str = "2c",
               timeout_secs: float = 5.0, retries: int = 1,
               wall_timeout_secs: float = 60.0,
