@@ -664,48 +664,82 @@ def main():
 
     del duplicates
 
-    for pluginCfgPath in cfgTree.getPathsToAttr('using-plugin-id-list'):
-        pluginIdList = cfgTree.getAttrValue('using-plugin-id-list', *pluginCfgPath, **dict(vector=True))
-        log.info('configuring plugin ID(s) %s (at %s)...' % (','.join(pluginIdList), '.'.join(pluginCfgPath)))
-        for credId in cfgTree.getAttrValue('matching-orig-snmp-peer-id-list', *pluginCfgPath, **dict(vector=True)):
-            for srvClassId in cfgTree.getAttrValue('matching-server-classification-id-list', *pluginCfgPath, **dict(vector=True)):
-                for trunkId in cfgTree.getAttrValue('matching-trunk-id-list', *pluginCfgPath, **dict(vector=True)):
-                    k = credId, srvClassId, trunkId
-                    if k in pluginIdMap:
-                        log.error('duplicate snmp-credentials-id=%s and server-classification-id=%s and trunk-id=%s at plugin-id %s' % (credId, srvClassId, trunkId, ','.join(pluginIdList)))
-                        return
-                    else:
-                        log.info('configuring plugin(s) %s (at %s), composite key: %s' % (','.join(pluginIdList), '.'.join(pluginCfgPath), '/'.join(k)))
+    def populate_routing(cfgTree):
+        """Build fresh plugin-routing and peer-routing tables from cfgTree
+        and atomically swap them into the live dicts. Called once at
+        startup and again on SIGHUP reload. Raises SnmpfwdError on any
+        config error so the running proxy keeps its old routing on
+        failure."""
+        new_plugin = {}
+        new_routing = {}
 
+        for pluginCfgPath in cfgTree.getPathsToAttr('using-plugin-id-list'):
+            pluginIdList = cfgTree.getAttrValue('using-plugin-id-list', *pluginCfgPath, vector=True)
+            log.info('configuring plugin ID(s) %s (at %s)...' % (','.join(pluginIdList), '.'.join(pluginCfgPath)))
+            for credId in cfgTree.getAttrValue('matching-orig-snmp-peer-id-list', *pluginCfgPath, vector=True):
+                for srvClassId in cfgTree.getAttrValue('matching-server-classification-id-list', *pluginCfgPath, vector=True):
+                    for trunkId in cfgTree.getAttrValue('matching-trunk-id-list', *pluginCfgPath, vector=True):
+                        k = credId, srvClassId, trunkId
+                        if k in new_plugin:
+                            raise SnmpfwdError(
+                                'duplicate snmp-credentials-id=%s and '
+                                'server-classification-id=%s and trunk-id=%s at plugin-id %s'
+                                % (credId, srvClassId, trunkId, ','.join(pluginIdList))
+                            )
+                        log.info('configuring plugin(s) %s (at %s), composite key: %s'
+                                 % (','.join(pluginIdList), '.'.join(pluginCfgPath), '/'.join(k)))
                         for pluginId in pluginIdList:
                             if not pluginManager.hasPlugin(pluginId):
-                                log.error('undefined plugin ID %s referenced at %s' % (pluginId, '.'.join(pluginCfgPath)))
-                                return
+                                raise SnmpfwdError(
+                                    'undefined plugin ID %s referenced at %s'
+                                    % (pluginId, '.'.join(pluginCfgPath))
+                                )
+                        new_plugin[k] = pluginIdList
 
-                        pluginIdMap[k] = pluginIdList
-
-    for routeCfgPath in cfgTree.getPathsToAttr('using-snmp-peer-id-list'):
-        peerIdList = cfgTree.getAttrValue('using-snmp-peer-id-list', *routeCfgPath, **dict(vector=True))
-        log.info('configuring routing entry with peer IDs %s (at %s)...' % (','.join(peerIdList), '.'.join(routeCfgPath)))
-        for credId in cfgTree.getAttrValue('matching-orig-snmp-peer-id-list', *routeCfgPath, **dict(vector=True)):
-            for srvClassId in cfgTree.getAttrValue('matching-server-classification-id-list', *routeCfgPath, **dict(vector=True)):
-                for trunkId in cfgTree.getAttrValue('matching-trunk-id-list', *routeCfgPath, **dict(vector=True)):
-                    k = credId, srvClassId, trunkId
-                    if k in routingMap:
-                        log.error('duplicate snmp-credentials-id=%s and server-classification-id=%s and trunk-id=%s at snmp-peer-id %s' % (credId, srvClassId, trunkId, ','.join(peerIdList)))
-                        return
-                    else:
+        for routeCfgPath in cfgTree.getPathsToAttr('using-snmp-peer-id-list'):
+            peerIdList = cfgTree.getAttrValue('using-snmp-peer-id-list', *routeCfgPath, vector=True)
+            log.info('configuring routing entry with peer IDs %s (at %s)...' % (','.join(peerIdList), '.'.join(routeCfgPath)))
+            for credId in cfgTree.getAttrValue('matching-orig-snmp-peer-id-list', *routeCfgPath, vector=True):
+                for srvClassId in cfgTree.getAttrValue('matching-server-classification-id-list', *routeCfgPath, vector=True):
+                    for trunkId in cfgTree.getAttrValue('matching-trunk-id-list', *routeCfgPath, vector=True):
+                        k = credId, srvClassId, trunkId
+                        if k in new_routing:
+                            raise SnmpfwdError(
+                                'duplicate snmp-credentials-id=%s and '
+                                'server-classification-id=%s and trunk-id=%s at snmp-peer-id %s'
+                                % (credId, srvClassId, trunkId, ','.join(peerIdList))
+                            )
                         for peerId in peerIdList:
                             if peerId not in peerIdMap:
-                                log.error('missing peer-id %s at %s' % (peerId, '.'.join(routeCfgPath)))
-                                return
+                                raise SnmpfwdError(
+                                    'missing peer-id %s at %s'
+                                    % (peerId, '.'.join(routeCfgPath))
+                                )
+                        new_routing[k] = peerIdList
 
-                        routingMap[k] = peerIdList
+        # Atomically swap into the live dicts captured by trunkCbFun / snmpCbFun.
+        pluginIdMap.clear()
+        pluginIdMap.update(new_plugin)
+        routingMap.clear()
+        routingMap.update(new_routing)
+
+    try:
+        populate_routing(cfgTree)
+    except SnmpfwdError:
+        log.error(str(sys.exc_info()[1]))
+        return
+
+    def reload_callback():
+        log.info('SIGHUP received; re-parsing %s' % args.config_file)
+        new_cfg = bootstrap.load_config(args, PROGRAM_NAME, CONFIG_VERSION)
+        populate_routing(new_cfg)
+        log.info('configuration routing reloaded from %s' % args.config_file)
 
     trunkingManager = TrunkingManager(trunkCbFun, transportDispatcher.loop)
 
     bootstrap.configure_trunks(cfgTree, trunkingManager)
     bootstrap.register_trunk_timers(transportDispatcher, trunkingManager)
+    bootstrap.install_reload_handler(transportDispatcher, reload_callback)
     bootstrap.run_dispatcher_loop(args, transportDispatcher)
 
 

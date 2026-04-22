@@ -749,80 +749,117 @@ def main():
                     (re.compile(peerAddress+'#'+bindAddress), peerId)
                 )
 
-    duplicates = {}
+    def populate_routing(cfgTree):
+        """Build fresh routing tables from `cfgTree` and atomically swap
+        them into the live dicts/lists. Called once at startup and
+        again on SIGHUP reload. Raises SnmpfwdError on any config error
+        so the running proxy keeps its old routing on failure."""
+        new_context = []
+        new_content = []
+        new_plugin = {}
+        new_trunk = {}
 
-    for contextCfgPath in cfgTree.getPathsToAttr('snmp-context-id'):
-        contextId = cfgTree.getAttrValue('snmp-context-id', *contextCfgPath)
-        if contextId in duplicates:
-            log.error('duplicate snmp-context-id=%s at %s and %s' % (contextId, '.'.join(contextCfgPath), '.'.join(duplicates[contextId])))
-            return
+        seen = {}
+        for contextCfgPath in cfgTree.getPathsToAttr('snmp-context-id'):
+            contextId = cfgTree.getAttrValue('snmp-context-id', *contextCfgPath)
+            if contextId in seen:
+                raise SnmpfwdError(
+                    'duplicate snmp-context-id=%s at %s and %s'
+                    % (contextId, '.'.join(contextCfgPath), '.'.join(seen[contextId]))
+                )
+            seen[contextId] = contextCfgPath
 
-        duplicates[contextId] = contextCfgPath
+            k = '#'.join((
+                cfgTree.getAttrValue('snmp-context-engine-id-pattern', *contextCfgPath),
+                cfgTree.getAttrValue('snmp-context-name-pattern', *contextCfgPath),
+            ))
+            log.info('configuring context ID %s (at %s), composite key: %s'
+                     % (contextId, '.'.join(contextCfgPath), k))
+            new_context.append((contextId, re.compile(k)))
 
-        k = '#'.join(
-            (cfgTree.getAttrValue('snmp-context-engine-id-pattern', *contextCfgPath),
-             cfgTree.getAttrValue('snmp-context-name-pattern', *contextCfgPath))
-        )
+        seen = {}
+        for contentCfgPath in cfgTree.getPathsToAttr('snmp-content-id'):
+            contentId = cfgTree.getAttrValue('snmp-content-id', *contentCfgPath)
+            if contentId in seen:
+                raise SnmpfwdError(
+                    'duplicate snmp-content-id=%s at %s and %s'
+                    % (contentId, '.'.join(contentCfgPath), '.'.join(seen[contentId]))
+                )
+            seen[contentId] = contentCfgPath
 
-        log.info('configuring context ID %s (at %s), composite key: %s' % (contextId, '.'.join(contextCfgPath), k))
+            for x in cfgTree.getAttrValue('snmp-pdu-oid-prefix-pattern-list',
+                                          *contentCfgPath, vector=True):
+                k = '#'.join([
+                    cfgTree.getAttrValue('snmp-pdu-type-pattern', *contentCfgPath), x,
+                ])
+                log.info('configuring content ID %s (at %s), composite key: %s'
+                         % (contentId, '.'.join(contentCfgPath), k))
+                new_content.append((contentId, re.compile(k)))
 
-        contextIdList.append((contextId, re.compile(k)))
-
-    duplicates = {}
-
-    for contentCfgPath in cfgTree.getPathsToAttr('snmp-content-id'):
-        contentId = cfgTree.getAttrValue('snmp-content-id', *contentCfgPath)
-        if contentId in duplicates:
-            log.error('duplicate snmp-content-id=%s at %s and %s' % (contentId, '.'.join(contentCfgPath), '.'.join(duplicates[contentId])))
-            return
-
-        duplicates[contentId] = contentCfgPath
-
-        for x in cfgTree.getAttrValue('snmp-pdu-oid-prefix-pattern-list', *contentCfgPath, **dict(vector=True)):
-            k = '#'.join([cfgTree.getAttrValue('snmp-pdu-type-pattern', *contentCfgPath), x])
-
-            log.info('configuring content ID %s (at %s), composite key: %s' % (contentId, '.'.join(contentCfgPath), k))
-
-            contentIdList.append((contentId, re.compile(k)))
-
-    del duplicates
-
-    for pluginCfgPath in cfgTree.getPathsToAttr('using-plugin-id-list'):
-        pluginIdList = cfgTree.getAttrValue('using-plugin-id-list', *pluginCfgPath, **dict(vector=True))
-        log.info('configuring plugin ID(s) %s (at %s)...' % (','.join(pluginIdList), '.'.join(pluginCfgPath)))
-        for credId in cfgTree.getAttrValue('matching-snmp-credentials-id-list', *pluginCfgPath, **dict(vector=True)):
-            for peerId in cfgTree.getAttrValue('matching-snmp-peer-id-list', *pluginCfgPath, **dict(vector=True)):
-                for contextId in cfgTree.getAttrValue('matching-snmp-context-id-list', *pluginCfgPath, **dict(vector=True)):
-                    for contentId in cfgTree.getAttrValue('matching-snmp-content-id-list', *pluginCfgPath, **dict(vector=True)):
-                        k = credId, contextId, peerId, contentId
-                        if k in pluginIdMap:
-                            log.error('duplicate snmp-credentials-id %s, snmp-context-id %s, snmp-peer-id %s, snmp-content-id %s at plugin-id(s) %s' % (credId, contextId, peerId, contentId, ','.join(pluginIdList)))
-                            return
-                        else:
-                            log.info('configuring plugin(s) %s (at %s), composite key: %s' % (','.join(pluginIdList), '.'.join(pluginCfgPath), '/'.join(k)))
-
+        for pluginCfgPath in cfgTree.getPathsToAttr('using-plugin-id-list'):
+            pluginIdList = cfgTree.getAttrValue('using-plugin-id-list', *pluginCfgPath, vector=True)
+            log.info('configuring plugin ID(s) %s (at %s)...' % (','.join(pluginIdList), '.'.join(pluginCfgPath)))
+            for credId in cfgTree.getAttrValue('matching-snmp-credentials-id-list', *pluginCfgPath, vector=True):
+                for peerId in cfgTree.getAttrValue('matching-snmp-peer-id-list', *pluginCfgPath, vector=True):
+                    for contextId in cfgTree.getAttrValue('matching-snmp-context-id-list', *pluginCfgPath, vector=True):
+                        for contentId in cfgTree.getAttrValue('matching-snmp-content-id-list', *pluginCfgPath, vector=True):
+                            k = credId, contextId, peerId, contentId
+                            if k in new_plugin:
+                                raise SnmpfwdError(
+                                    'duplicate snmp-credentials-id %s, snmp-context-id %s, '
+                                    'snmp-peer-id %s, snmp-content-id %s at plugin-id(s) %s'
+                                    % (credId, contextId, peerId, contentId, ','.join(pluginIdList))
+                                )
+                            log.info('configuring plugin(s) %s (at %s), composite key: %s'
+                                     % (','.join(pluginIdList), '.'.join(pluginCfgPath), '/'.join(k)))
                             for pluginId in pluginIdList:
                                 if not pluginManager.hasPlugin(pluginId):
-                                    log.error('undefined plugin ID %s referenced at %s' % (pluginId, '.'.join(pluginCfgPath)))
-                                    return
+                                    raise SnmpfwdError(
+                                        'undefined plugin ID %s referenced at %s'
+                                        % (pluginId, '.'.join(pluginCfgPath))
+                                    )
+                            new_plugin[k] = pluginIdList
 
-                            pluginIdMap[k] = pluginIdList
+        for routeCfgPath in cfgTree.getPathsToAttr('using-trunk-id-list'):
+            trunkIdList = cfgTree.getAttrValue('using-trunk-id-list', *routeCfgPath, vector=True)
+            log.info('configuring destination trunk ID(s) %s (at %s)...' % (','.join(trunkIdList), '.'.join(routeCfgPath)))
+            for credId in cfgTree.getAttrValue('matching-snmp-credentials-id-list', *routeCfgPath, vector=True):
+                for peerId in cfgTree.getAttrValue('matching-snmp-peer-id-list', *routeCfgPath, vector=True):
+                    for contextId in cfgTree.getAttrValue('matching-snmp-context-id-list', *routeCfgPath, vector=True):
+                        for contentId in cfgTree.getAttrValue('matching-snmp-content-id-list', *routeCfgPath, vector=True):
+                            k = credId, contextId, peerId, contentId
+                            if k in new_trunk:
+                                raise SnmpfwdError(
+                                    'duplicate snmp-credentials-id %s, snmp-context-id %s, '
+                                    'snmp-peer-id %s, snmp-content-id %s at trunk-id(s) %s'
+                                    % (credId, contextId, peerId, contentId, ','.join(trunkIdList))
+                                )
+                            new_trunk[k] = trunkIdList
+                            log.info('configuring trunk routing to %s (at %s), composite key: %s'
+                                     % (','.join(trunkIdList), '.'.join(routeCfgPath), '/'.join(k)))
 
-    for routeCfgPath in cfgTree.getPathsToAttr('using-trunk-id-list'):
-        trunkIdList = cfgTree.getAttrValue('using-trunk-id-list', *routeCfgPath, **dict(vector=True))
-        log.info('configuring destination trunk ID(s) %s (at %s)...' % (','.join(trunkIdList), '.'.join(routeCfgPath)))
-        for credId in cfgTree.getAttrValue('matching-snmp-credentials-id-list', *routeCfgPath, **dict(vector=True)):
-            for peerId in cfgTree.getAttrValue('matching-snmp-peer-id-list', *routeCfgPath, **dict(vector=True)):
-                for contextId in cfgTree.getAttrValue('matching-snmp-context-id-list', *routeCfgPath, **dict(vector=True)):
-                    for contentId in cfgTree.getAttrValue('matching-snmp-content-id-list', *routeCfgPath, **dict(vector=True)):
-                        k = credId, contextId, peerId, contentId
-                        if k in trunkIdMap:
-                            log.error('duplicate snmp-credentials-id %s, snmp-context-id %s, snmp-peer-id %s, snmp-content-id %s at trunk-id(s) %s' % (credId, contextId, peerId, contentId, ','.join(trunkIdList)))
-                            return
-                        else:
-                            trunkIdMap[k] = trunkIdList
+        # Everything parsed cleanly — atomically swap into the live dicts
+        # that observer closures hold references to.
+        contextIdList.clear()
+        contextIdList.extend(new_context)
+        contentIdList.clear()
+        contentIdList.extend(new_content)
+        pluginIdMap.clear()
+        pluginIdMap.update(new_plugin)
+        trunkIdMap.clear()
+        trunkIdMap.update(new_trunk)
 
-                        log.info('configuring trunk routing to %s (at %s), composite key: %s' % (','.join(trunkIdList), '.'.join(routeCfgPath), '/'.join(k)))
+    try:
+        populate_routing(cfgTree)
+    except SnmpfwdError:
+        log.error(str(sys.exc_info()[1]))
+        return
+
+    def reload_callback():
+        log.info('SIGHUP received; re-parsing %s' % args.config_file)
+        new_cfg = bootstrap.load_config(args, PROGRAM_NAME, CONFIG_VERSION)
+        populate_routing(new_cfg)
+        log.info('configuration routing reloaded from %s' % args.config_file)
 
     def dataCbFun(trunkId, msgId, msg):
         log.debug('message ID %s received from trunk %s' % (msgId, trunkId))
@@ -831,6 +868,7 @@ def main():
 
     bootstrap.configure_trunks(cfgTree, trunkingManager)
     bootstrap.register_trunk_timers(transportDispatcher, trunkingManager)
+    bootstrap.install_reload_handler(transportDispatcher, reload_callback)
     bootstrap.run_dispatcher_loop(args, transportDispatcher)
 
 

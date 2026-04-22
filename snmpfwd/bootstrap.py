@@ -225,14 +225,16 @@ def register_trunk_timers(
 
 
 def _install_signal_handlers(loop) -> None:
-    """Wire SIGTERM/SIGINT/SIGHUP/SIGQUIT to stop the event loop.
+    """Wire SIGTERM/SIGINT/SIGQUIT to stop the event loop. SIGHUP is
+    deliberately excluded — `install_reload_handler` claims it for
+    config reloading, the convention used by most Unix daemons.
 
     Uses loop.add_signal_handler rather than signal.signal so the loop
     wakes up cleanly — signal.signal delivers to an arbitrary thread
     during an arbitrary syscall, which races with asyncio's internals.
     On Windows, where add_signal_handler is NotImplementedError, fall
     back to signal.signal with a threadsafe loop.stop dispatch."""
-    handled = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP, signal.SIGQUIT)
+    handled = (signal.SIGTERM, signal.SIGINT, signal.SIGQUIT)
     for sig in handled:
         try:
             loop.add_signal_handler(sig, loop.stop)
@@ -241,8 +243,36 @@ def _install_signal_handlers(loop) -> None:
                 signal.signal(sig, lambda *_: loop.call_soon_threadsafe(loop.stop))
             except (ValueError, OSError):
                 # Not all signals are available on every platform (e.g.,
-                # SIGHUP / SIGQUIT on Windows). Skip silently.
+                # SIGQUIT on Windows). Skip silently.
                 pass
+
+
+def install_reload_handler(
+    transportDispatcher: AsyncioDispatcher,
+    reload_callback,
+) -> None:
+    """Register a SIGHUP handler that invokes `reload_callback()`.
+
+    The callback is expected to re-parse the config and apply any
+    safely-applicable changes (routing maps, classifier lists, etc.).
+    Exceptions raised by the callback are caught and logged — the
+    running process keeps whatever configuration it already had."""
+    loop = transportDispatcher.loop
+
+    def _on_sighup():
+        try:
+            reload_callback()
+        except Exception:
+            log.error(
+                'configuration reload failed, keeping previous config: %s'
+                % sys.exc_info()[1]
+            )
+
+    try:
+        loop.add_signal_handler(signal.SIGHUP, _on_sighup)
+    except (AttributeError, NotImplementedError, RuntimeError):
+        # Windows has no SIGHUP; fall back silently.
+        pass
 
 
 def run_dispatcher_loop(

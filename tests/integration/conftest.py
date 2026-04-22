@@ -180,6 +180,12 @@ class SnmpfwdProxy:
     trunk_port: int
     server_log: Path
     client_log: Path
+    # Exposed so reload-style tests can mutate the config file and
+    # signal the daemons without re-implementing the whole fixture.
+    server_config_path: Path = None
+    client_config_path: Path = None
+    server_pid: int = None
+    client_pid: int = None
 
 
 def _resolve_binary(name: str) -> str:
@@ -280,6 +286,10 @@ def _spawn_snmpfwd_proxy(
             trunk_port=trunk_port,
             server_log=server_log,
             client_log=client_log,
+            server_config_path=server_conf,
+            client_config_path=client_conf,
+            server_pid=server_proc.proc.pid,
+            client_pid=client_proc.proc.pid,
         )
     finally:
         if server_proc is not None:
