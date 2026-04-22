@@ -8,7 +8,7 @@ import asyncio
 import socket
 import sys
 import traceback
-from snmpfwd import log, next, error
+from snmpfwd import log, msgid, error
 from snmpfwd.trunking import protocol
 
 
@@ -129,7 +129,7 @@ class TrunkingClient(asyncio.Protocol):
     # Public API — called from TrunkingManager
 
     def sendReq(self, req, cbFun, cbCtx):
-        msgId = next.getId()
+        msgId = msgid.getId()
         if self.__transport is None:
             # Trunk is not connected yet; TrunkingManager will detect this
             # on its next setupTrunks tick and rebuild.
@@ -153,7 +153,7 @@ class TrunkingClient(asyncio.Protocol):
             log.debug('%s: trunk announcement sent' % self)
 
     def sendPing(self, serial, cbFun, cbCtx):
-        msgId = next.getId()
+        msgId = msgid.getId()
         if self.__transport is None:
             return
         self.__transport.write(protocol.preparePingData(msgId, serial, self.__secret))

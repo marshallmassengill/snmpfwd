@@ -8,7 +8,7 @@ import asyncio
 import socket
 import sys
 import traceback
-from snmpfwd import log, next, error
+from snmpfwd import log, msgid, error
 from snmpfwd.trunking import protocol
 
 
@@ -152,7 +152,7 @@ class TrunkingServer(asyncio.Protocol):
     # Public API — called from TrunkingManager
 
     def sendReq(self, req, cbFun, cbCtx):
-        msgId = next.getId()
+        msgId = msgid.getId()
         if self.__transport is None:
             return msgId
         self.__transport.write(protocol.prepareRequestData(msgId, req, self.__secret))
@@ -165,7 +165,7 @@ class TrunkingServer(asyncio.Protocol):
         self.__transport.write(protocol.prepareResponseData(msgId, rsp, self.__secret))
 
     def sendPing(self, serial, cbFun, cbCtx):
-        msgId = next.getId()
+        msgId = msgid.getId()
         if self.__transport is None:
             return
         self.__transport.write(protocol.preparePingData(msgId, serial, self.__secret))
