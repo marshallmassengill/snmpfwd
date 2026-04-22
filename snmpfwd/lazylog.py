@@ -52,7 +52,7 @@ class LazyLogString(object):
         if pdu:
             logMsg = pdu.__class__.__name__ + '#'
 
-            for oid, val in v2c.apiPDU.getVarBinds(pdu):
+            for oid, val in v2c.apiPDU.get_varbinds(pdu):
                 val = val.prettyPrint()
                 if len(val) > 32:
                     val = val[:32] + '...'

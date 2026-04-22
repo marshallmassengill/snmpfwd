@@ -8,9 +8,9 @@ import re
 
 from snmpfwd.error import SnmpfwdError
 
-from pysnmp.carrier.asynsock.dgram import udp
+from pysnmp.carrier.asyncio.dgram import udp
 try:
-    from pysnmp.carrier.asynsock.dgram import udp6
+    from pysnmp.carrier.asyncio.dgram import udp6
 except ImportError:
     udp6 = None
 

@@ -16,16 +16,14 @@ from pysnmp.error import PySnmpError
 from pysnmp.entity import engine, config
 from pysnmp.entity.rfc3413 import cmdrsp, ntfrcv, context
 from pysnmp.proto.proxy import rfc2576
-from pysnmp.carrier.asynsock.dgram import udp
+from pysnmp.carrier.asyncio.dgram import udp
 try:
-    from pysnmp.carrier.asynsock.dgram import udp6
+    from pysnmp.carrier.asyncio.dgram import udp6
 except ImportError:
     udp6 = None
-try:
-    from pysnmp.carrier.asynsock.dgram import unix
-except ImportError:
-    unix = None
-from pysnmp.carrier.asynsock.dispatch import AsynsockDispatcher
+# UNIX domain SNMP transport has no asyncio carrier equivalent.
+unix = None
+from pysnmp.carrier.asyncio.dispatch import AsyncioDispatcher
 from pysnmp.proto import rfc1157, rfc1902, rfc1905
 from pysnmp.proto.api import v1, v2c
 from pyasn1 import debug as pyasn1_debug
@@ -80,13 +78,34 @@ snmpPduTypesMap = {
 def main():
 
     class CommandResponder(cmdrsp.CommandResponderBase):
-        pduTypes = (rfc1905.SetRequestPDU.tagSet,
-                    rfc1905.GetRequestPDU.tagSet,
-                    rfc1905.GetNextRequestPDU.tagSet,
-                    rfc1905.GetBulkRequestPDU.tagSet)
+        SUPPORTED_PDU_TYPES = (rfc1905.SetRequestPDU.tagSet,
+                               rfc1905.GetRequestPDU.tagSet,
+                               rfc1905.GetNextRequestPDU.tagSet,
+                               rfc1905.GetBulkRequestPDU.tagSet)
 
-        def handleMgmtOperation(self, snmpEngine, stateReference, contextName,
-                                pdu, acInfo):
+        # pysnmp 7 unconditionally calls release_state_information at the
+        # end of process_pdu, but snmpfwd forwards PDUs asynchronously over
+        # a trunk and needs the pysnmp per-request state to survive until
+        # trunkCbFun receives the reply. We stash a copy of the state on
+        # the way in and re-insert it into pysnmp's pending-request dict
+        # just before calling send_pdu from trunkCbFun.
+        _stashedState = {}
+
+        def _peek_pending_state(self, stateReference):
+            return self._CommandResponderBase__pendingReqs.get(stateReference)
+
+        def _restore_pending_state(self, stateReference):
+            state = self._stashedState.pop(stateReference, None)
+            if state is not None:
+                self._CommandResponderBase__pendingReqs[stateReference] = state
+
+        def handle_management_operation(self, snmpEngine, stateReference,
+                                        contextName, pdu):
+            # Stash pysnmp's state before pysnmp 7's process_pdu auto-releases it.
+            state = self._peek_pending_state(stateReference)
+            if state is not None:
+                self._stashedState[stateReference] = state
+
             trunkReq = gCurrentRequestContext.copy()
 
             trunkReq['snmp-pdu'] = pdu
@@ -110,20 +129,20 @@ def main():
 
                 elif st == status.DROP:
                     log.debug('received SNMP message, plugin %s muted request' % pluginId, ctx=logCtx)
-                    self.releaseStateInformation(stateReference)
+                    self.release_state_information(stateReference)
                     return
 
                 elif st == status.RESPOND:
                     log.debug('received SNMP message, plugin %s forced immediate response' % pluginId, ctx=logCtx)
 
                     try:
-                        self.sendPdu(snmpEngine, stateReference, pdu)
+                        self.send_pdu(snmpEngine, stateReference, pdu)
 
                     except PySnmpError:
                         log.error('failure sending SNMP response: %s' % sys.exc_info()[1], ctx=logCtx)
 
                     else:
-                        self.releaseStateInformation(stateReference)
+                        self.release_state_information(stateReference)
 
                     return
 
@@ -179,11 +198,15 @@ def main():
                         break
                     elif st == status.DROP:
                         log.debug('plugin %s muted response' % pluginId, ctx=logCtx)
-                        self.releaseStateInformation(stateReference)
+                        self.release_state_information(stateReference)
                         return
 
+                # Re-insert the state we stashed in handle_management_operation
+                # so pysnmp's send_pdu can find it.
+                self._restore_pending_state(stateReference)
+
                 try:
-                    self.sendPdu(snmpEngine, stateReference, pdu)
+                    self.send_pdu(snmpEngine, stateReference, pdu)
 
                 except PySnmpError:
                     log.error('trunk message #%s, SNMP response error: %s' % (msgId, sys.exc_info()[1]),
@@ -192,25 +215,25 @@ def main():
                 else:
                     log.debug('received trunk message #%s, forwarded as SNMP message' % msgId, ctx=logCtx)
 
-            self.releaseStateInformation(stateReference)
+            self.release_state_information(stateReference)
 
     #
     # SNMPv3 NotificationReceiver implementation
     #
 
     class NotificationReceiver(ntfrcv.NotificationReceiver):
-        pduTypes = (rfc1157.TrapPDU.tagSet,
-                    rfc1905.SNMPv2TrapPDU.tagSet)
+        SUPPORTED_PDU_TYPES = (rfc1157.TrapPDU.tagSet,
+                               rfc1905.SNMPv2TrapPDU.tagSet)
 
-        def processPdu(self, snmpEngine, messageProcessingModel,
-                       securityModel, securityName, securityLevel,
-                       contextEngineId, contextName, pduVersion, pdu,
-                       maxSizeResponseScopedPDU, stateReference):
+        def process_pdu(self, snmpEngine, messageProcessingModel,
+                        securityModel, securityName, securityLevel,
+                        contextEngineId, contextName, pduVersion, pdu,
+                        maxSizeResponseScopedPDU, stateReference):
 
             trunkReq = gCurrentRequestContext.copy()
 
             if messageProcessingModel == 0:
-                pdu = rfc2576.v1ToV2(pdu)
+                pdu = rfc2576.v1_to_v2(pdu)
 
             trunkReq['snmp-pdu'] = pdu
 
@@ -377,14 +400,17 @@ def main():
 
     def requestObserver(snmpEngine, execpoint, variables, cbCtx):
 
+        bindHost, bindPort = transportDomainBindAddr.get(
+            str(variables['transportDomain']), ('', 0)
+        )
         trunkReq = {
             'callflow-id': '%10.10x' % random.randint(0, 0xffffffffff),
             'snmp-engine-id': snmpEngine.snmpEngineID,
             'snmp-transport-domain': variables['transportDomain'],
             'snmp-peer-address': variables['transportAddress'][0],
             'snmp-peer-port': variables['transportAddress'][1],
-            'snmp-bind-address': variables['transportAddress'].getLocalAddress()[0],
-            'snmp-bind-port': variables['transportAddress'].getLocalAddress()[1],
+            'snmp-bind-address': bindHost,
+            'snmp-bind-port': bindPort,
             'snmp-security-model': variables['securityModel'],
             'snmp-security-level': variables['securityLevel'],
             'snmp-security-name': variables['securityName'],
@@ -418,7 +444,7 @@ def main():
             else:
                 trunkReq['snmp-context-id'] = None
 
-        addr = '%s:%s#%s:%s' % (variables['transportAddress'][0], variables['transportAddress'][1], variables['transportAddress'].getLocalAddress()[0], variables['transportAddress'].getLocalAddress()[1])
+        addr = '%s:%s#%s:%s' % (variables['transportAddress'][0], variables['transportAddress'][1], bindHost, bindPort)
 
         for pat, peerId in peerIdMap.get(str(variables['transportDomain']), ()):
             if pat.match(addr):
@@ -429,12 +455,12 @@ def main():
 
         pdu = variables['pdu']
         if pdu.tagSet == v1.TrapPDU.tagSet:
-            pdu = rfc2576.v1ToV2(pdu)
-            v2c.apiTrapPDU.setDefaults(pdu)
+            pdu = rfc2576.v1_to_v2(pdu)
+            v2c.apiTrapPDU.set_defaults(pdu)
 
         k = '#'.join(
             [snmpPduTypesMap.get(variables['pdu'].tagSet, '?'),
-             '|'.join([str(x[0]) for x in v2c.apiTrapPDU.getVarBinds(pdu)])]
+             '|'.join([str(x[0]) for x in v2c.apiTrapPDU.get_varbinds(pdu)])]
         )
 
         for x, y in contentIdList:
@@ -535,7 +561,7 @@ Software documentation and support at https://www.pysnmp.com/snmpfwd/
                hasattr(pyasn1, '__version__') and pyasn1.__version__ or 'unknown', sys.version, helpMessage))
             return
         elif opt[0] == '--debug-snmp':
-            pysnmp_debug.setLogger(pysnmp_debug.Debug(*opt[1].split(','), **dict(loggerName=PROGRAM_NAME + '.pysnmp')))
+            pysnmp_debug.set_logger(pysnmp_debug.Debug(*opt[1].split(','), **dict(loggerName=PROGRAM_NAME + '.pysnmp')))
         elif opt[0] == '--debug-asn1':
             pyasn1_debug.setLogger(pyasn1_debug.Debug(*opt[1].split(','), **dict(loggerName=PROGRAM_NAME + '.pyasn1')))
         elif opt[0] == '--daemonize':
@@ -591,9 +617,15 @@ Software documentation and support at https://www.pysnmp.com/snmpfwd/
     trunkIdMap = {}
     engineIdMap = {}
 
-    transportDispatcher = AsynsockDispatcher()
-    transportDispatcher.registerRoutingCbFun(lambda td, t, d: td)
-    transportDispatcher.setSocketMap()  # use global asyncore socket map
+    # Map transport-domain OID (as string) -> (bindHost, bindPort). Populated
+    # during config load because pysnmp 7's asyncio carrier delivers
+    # transportAddress as a plain (host, port) tuple without the old
+    # getLocalAddress() helper, so we need to recover the local bind info
+    # ourselves inside the observer.
+    transportDomainBindAddr = {}
+
+    transportDispatcher = AsyncioDispatcher()
+    transportDispatcher.register_routing_callback(lambda td, t, d: td)
 
     #
     # Initialize plugin modules
@@ -645,20 +677,20 @@ Software documentation and support at https://www.pysnmp.com/snmpfwd/
                 'securityName': {}
             }
 
-            snmpEngine.observer.registerObserver(
+            snmpEngine.observer.register_observer(
                 securityAuditObserver,
                 'rfc2576.prepareDataElements:sm-failure',
                 'rfc3412.prepareDataElements:sm-failure',
                 cbCtx=gCurrentRequestContext
             )
 
-            snmpEngine.observer.registerObserver(
+            snmpEngine.observer.register_observer(
                 requestObserver,
                 'rfc3412.receiveMessage:request',
                 cbCtx=gCurrentRequestContext
             )
 
-            snmpEngine.observer.registerObserver(
+            snmpEngine.observer.register_observer(
                 usmRequestObserver,
                 'rfc3414.processIncomingMsg',
                 cbCtx=gCurrentRequestContext
@@ -700,9 +732,9 @@ Software documentation and support at https://www.pysnmp.com/snmpfwd/
                 return
 
             if transportDomain[:len(udp.domainName)] == udp.domainName:
-                transport = udp.UdpTransport()
+                transport = udp.UdpTransport(loop=transportDispatcher.loop)
             else:
-                transport = udp6.Udp6Transport()
+                transport = udp6.Udp6Transport(loop=transportDispatcher.loop)
 
             t = transport.openServerMode(bindAddr)
 
@@ -712,13 +744,14 @@ Software documentation and support at https://www.pysnmp.com/snmpfwd/
             elif 'virtual-interface' in transportOptions:
                 t.enablePktInfo()
 
-            snmpEngine.registerTransportDispatcher(
+            snmpEngine.register_transport_dispatcher(
                 transportDispatcher, transportDomain
             )
 
             config.addSocketTransport(snmpEngine, transportDomain, t)
 
             snmpEngineMap['transportDomain'][transportDomain] = bindAddr, transportDomain
+            transportDomainBindAddr[str(transportDomain)] = bindAddr
 
             log.info('new transport endpoint [%s]:%s, options %s, transport ID %s' % (bindAddr[0], bindAddr[1], transportOptions and '/'.join(transportOptions) or '<none>', transportDomain))
 
@@ -911,7 +944,7 @@ Software documentation and support at https://www.pysnmp.com/snmpfwd/
     def dataCbFun(trunkId, msgId, msg):
         log.debug('message ID %s received from trunk %s' % (msgId, trunkId))
 
-    trunkingManager = TrunkingManager(dataCbFun)
+    trunkingManager = TrunkingManager(dataCbFun, transportDispatcher.loop)
 
     for trunkCfgPath in cfgTree.getPathsToAttr('trunk-id'):
         trunkId = cfgTree.getAttrValue('trunk-id', *trunkCfgPath)
@@ -936,10 +969,10 @@ Software documentation and support at https://www.pysnmp.com/snmpfwd/
             )
             log.info('new trunking server at %s' % (cfgTree.getAttrValue('trunk-bind-address', *trunkCfgPath)))
 
-    transportDispatcher.registerTimerCbFun(
+    transportDispatcher.register_timer_callback(
         trunkingManager.setupTrunks, random.randrange(1, 5)
     )
-    transportDispatcher.registerTimerCbFun(
+    transportDispatcher.register_timer_callback(
         trunkingManager.monitorTrunks, random.randrange(1, 5)
     )
 

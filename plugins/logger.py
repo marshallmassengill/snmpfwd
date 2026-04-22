@@ -206,7 +206,7 @@ def _format(template, pdu, context):
                                    leftParen,
                                    vb[1].prettyPrint().replace(leftParen, leftParen + leftParen).replace(rightParen, rightParen + rightParen),
                                    rightParen)
-                    for vb in v2c.apiPDU.getVarBinds(pdu)]
+                    for vb in v2c.apiPDU.get_varbinds(pdu)]
         template = template.replace(token, ' '.join(varBinds))
 
     token = '${snmp-pdu-type}'

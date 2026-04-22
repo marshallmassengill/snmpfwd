@@ -71,7 +71,7 @@ info('%s: plugin initialization complete' % PLUGIN_NAME)
 def processCommandResponse(pluginId, snmpEngine, pdu, trunkMsg, reqCtx):
     varBinds = []
 
-    for oid, val in v2c.apiPDU.getVarBinds(pdu):
+    for oid, val in v2c.apiPDU.get_varbinds(pdu):
         for oidPatt, valPatt, valRepl, replCount in rewriteList:
             if oidPatt.match(str(oid)):
                 newVal = valPatt.sub(valRepl, str(val), replCount)
@@ -82,7 +82,7 @@ def processCommandResponse(pluginId, snmpEngine, pdu, trunkMsg, reqCtx):
 
         varBinds.append((oid, val))
 
-    v2c.apiPDU.setVarBinds(pdu, varBinds)
+    v2c.apiPDU.set_varbinds(pdu, varBinds)
 
     return status.NEXT, pdu
 

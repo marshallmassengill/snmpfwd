@@ -16,16 +16,14 @@ from pysnmp.error import PySnmpError
 from pysnmp.entity import engine, config
 from pysnmp.entity.rfc3413 import config as lcd
 from pysnmp.entity.rfc3413 import cmdgen, ntforg, context
-from pysnmp.carrier.asynsock.dgram import udp
+from pysnmp.carrier.asyncio.dgram import udp
 try:
-    from pysnmp.carrier.asynsock.dgram import udp6
+    from pysnmp.carrier.asyncio.dgram import udp6
 except ImportError:
     udp6 = None
-try:
-    from pysnmp.carrier.asynsock.dgram import unix
-except ImportError:
-    unix = None
-from pysnmp.carrier.asynsock.dispatch import AsynsockDispatcher
+# UNIX domain SNMP transport has no asyncio carrier equivalent.
+unix = None
+from pysnmp.carrier.asyncio.dispatch import AsyncioDispatcher
 from pysnmp.proto import rfc1157, rfc1902, rfc1905, rfc3411
 from pysnmp.proto.api import v2c
 from pyasn1 import debug as pyasn1_debug
@@ -137,12 +135,12 @@ def main():
             reqPdu = trunkReq['server-snmp-pdu']
 
             for pluginId in pluginIdList:
-                if reqPdu.tagSet in rfc3411.notificationClassPDUs:
+                if reqPdu.tagSet in rfc3411.NOTIFICATION_CLASS_PDUS:
                     st, rspPDU = pluginManager.processNotificationResponse(
                         pluginId, snmpEngine, rspPDU, trunkReq, reqCtx
                     )
 
-                elif reqPdu.tagSet not in rfc3411.unconfirmedClassPDUs:
+                elif reqPdu.tagSet not in rfc3411.UNCONFIRMED_CLASS_PDUS:
                     st, rspPDU = pluginManager.processCommandResponse(
                         pluginId, snmpEngine, rspPDU, trunkReq, reqCtx
                     )
@@ -182,7 +180,7 @@ def main():
                 peerAddr, bindAddr = endpoints.pop(), endpoints.pop()
 
                 try:
-                    addrInfo[1] = addrInfo[1].__class__(peerAddr).setLocalAddress(bindAddr)
+                    addrInfo[1] = addrInfo[1].__class__(peerAddr).set_local_address(bindAddr)
 
                 except Exception:
                     raise PySnmpError('failure replacing bind address %s -> %s for transport '
@@ -195,7 +193,7 @@ def main():
 
         return getTargetAddr, updateEndpoints
 
-    lcd.getTargetAddr, updateEndpoints = makeTargetAddrOverride(lcd.getTargetAddr)
+    lcd.get_target_address, updateEndpoints = makeTargetAddrOverride(lcd.get_target_address)
 
     def trunkCbFun(trunkId, msgId, trunkReq):
 
@@ -217,7 +215,7 @@ def main():
                               trunkReq['server-snmp-context-name'])]
 
         k.append(snmpPduTypesMap.get(trunkReq['server-snmp-pdu'].tagSet, '?'))
-        k.append('|'.join([str(x[0]) for x in v2c.apiPDU.getVarBinds(trunkReq['server-snmp-pdu'])]))
+        k.append('|'.join([str(x[0]) for x in v2c.apiPDU.get_varbinds(trunkReq['server-snmp-pdu'])]))
         k = '#'.join(k)
 
         for x, y in origCredIdList:
@@ -298,12 +296,12 @@ def main():
 
                 for pluginNum, pluginId in enumerate(pluginIdList):
 
-                    if pdu.tagSet in rfc3411.notificationClassPDUs:
+                    if pdu.tagSet in rfc3411.NOTIFICATION_CLASS_PDUS:
                         st, pdu = pluginManager.processNotificationRequest(
                             pluginId, snmpEngine, pdu, trunkReqCopy, reqCtx
                         )
 
-                    elif pdu.tagSet not in rfc3411.unconfirmedClassPDUs:
+                    elif pdu.tagSet not in rfc3411.UNCONFIRMED_CLASS_PDUS:
                         st, pdu = pluginManager.processCommandRequest(
                             pluginId, snmpEngine, pdu, trunkReqCopy, reqCtx
                         )
@@ -329,10 +327,10 @@ def main():
 
             snmpMessageSent = False
 
-            if pdu.tagSet in rfc3411.notificationClassPDUs:
-                if pdu.tagSet in rfc3411.unconfirmedClassPDUs:
+            if pdu.tagSet in rfc3411.NOTIFICATION_CLASS_PDUS:
+                if pdu.tagSet in rfc3411.UNCONFIRMED_CLASS_PDUS:
                     try:
-                        notificationOriginator.sendPdu(
+                        notificationOriginator.send_pdu(
                             snmpEngine,
                             peerId,
                             macro.expandMacro(contextEngineId, trunkReq),
@@ -354,7 +352,7 @@ def main():
 
                 else:
                     try:
-                        notificationOriginator.sendPdu(
+                        notificationOriginator.send_pdu(
                             snmpEngine,
                             peerId,
                             macro.expandMacro(contextEngineId, trunkReq),
@@ -369,9 +367,9 @@ def main():
                     except PySnmpError:
                         log.error('trunk message #%s, SNMP error: %s' % (msgId, sys.exc_info()[1]), ctx=logCtx)
 
-            elif pdu.tagSet not in rfc3411.unconfirmedClassPDUs:
+            elif pdu.tagSet not in rfc3411.UNCONFIRMED_CLASS_PDUS:
                 try:
-                    commandGenerator.sendPdu(
+                    commandGenerator.send_pdu(
                         snmpEngine,
                         peerId,
                         macro.expandMacro(contextEngineId, trunkReq),
@@ -470,7 +468,7 @@ Software documentation and support at https://www.pysnmp.com/snmpfwd/
 """ % (snmpfwd.__version__, hasattr(pysnmp, '__version__') and pysnmp.__version__ or 'unknown', hasattr(pyasn1, '__version__') and pyasn1.__version__ or 'unknown', sys.version, helpMessage))
             return
         elif opt[0] == '--debug-snmp':
-            pysnmp_debug.setLogger(pysnmp_debug.Debug(*opt[1].split(','), **dict(loggerName=PROGRAM_NAME + '.pysnmp')))
+            pysnmp_debug.set_logger(pysnmp_debug.Debug(*opt[1].split(','), **dict(loggerName=PROGRAM_NAME + '.pysnmp')))
         elif opt[0] == '--debug-asn1':
             pyasn1_debug.setLogger(pyasn1_debug.Debug(*opt[1].split(','), **dict(loggerName=PROGRAM_NAME + '.pyasn1')))
         elif opt[0] == '--daemonize':
@@ -532,9 +530,8 @@ Software documentation and support at https://www.pysnmp.com/snmpfwd/
 
     notificationOriginator = ntforg.NotificationOriginator()
 
-    transportDispatcher = AsynsockDispatcher()
-    transportDispatcher.registerRoutingCbFun(lambda td, t, d: td)
-    transportDispatcher.setSocketMap()  # use global asyncore socket map
+    transportDispatcher = AsyncioDispatcher()
+    transportDispatcher.register_routing_callback(lambda td, t, d: td)
 
     pluginManager = PluginManager(
         macro.expandMacros(
@@ -615,11 +612,11 @@ Software documentation and support at https://www.pysnmp.com/snmpfwd/
 
         else:
             if transportDomain[:len(udp.domainName)] == udp.domainName:
-                transport = udp.UdpTransport()
+                transport = udp.UdpTransport(loop=transportDispatcher.loop)
             else:
-                transport = udp6.Udp6Transport()
+                transport = udp6.Udp6Transport(loop=transportDispatcher.loop)
 
-            snmpEngine.registerTransportDispatcher(
+            snmpEngine.register_transport_dispatcher(
                 transportDispatcher, transportDomain
             )
 
@@ -840,7 +837,7 @@ Software documentation and support at https://www.pysnmp.com/snmpfwd/
 
                         routingMap[k] = peerIdList
 
-    trunkingManager = TrunkingManager(trunkCbFun)
+    trunkingManager = TrunkingManager(trunkCbFun, transportDispatcher.loop)
 
     for trunkCfgPath in cfgTree.getPathsToAttr('trunk-id'):
         trunkId = cfgTree.getAttrValue('trunk-id', *trunkCfgPath)
@@ -865,10 +862,10 @@ Software documentation and support at https://www.pysnmp.com/snmpfwd/
             )
             log.info('new trunking server at %s' % (cfgTree.getAttrValue('trunk-bind-address', *trunkCfgPath)))
 
-    transportDispatcher.registerTimerCbFun(
+    transportDispatcher.register_timer_callback(
         trunkingManager.setupTrunks, random.randrange(1, 5)
     )
-    transportDispatcher.registerTimerCbFun(
+    transportDispatcher.register_timer_callback(
         trunkingManager.monitorTrunks, random.randrange(1, 5)
     )
 

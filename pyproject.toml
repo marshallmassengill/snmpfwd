@@ -29,8 +29,10 @@ include = ["docs", "tests", "examples"]
 
 
 [tool.poetry.dependencies]
-python = "^3.8"
-pysnmp = ">=4.4.3"
+python = "^3.11"
+pysnmp = "^7.1"
+pyasn1 = "^0.6"
+pycryptodomex = "^3.20"
 
 [tool.poetry.dev-dependencies]
 codecov = "^2.1.12"

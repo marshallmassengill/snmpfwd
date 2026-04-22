@@ -9,7 +9,8 @@ from snmpfwd import log, error
 
 
 class TrunkingManager(object):
-    def __init__(self, dataCbFun):
+    def __init__(self, dataCbFun, loop):
+        self.__loop = loop
         self.__clients = {}
         self.__runningServersTrunkMap = {}
         self.__runningServersConnMap = {}
@@ -50,8 +51,9 @@ class TrunkingManager(object):
                 del self.__runningClientsTrunkMap[trunkId]
 
             if trunkId not in self.__runningClientsTrunkMap:
+                localEndpoint, remoteEndpoint, secret, dataCbFun = self.__clients[trunkId]
                 self.__runningClientsTrunkMap[trunkId] = client.TrunkingClient(
-                    *self.__clients[trunkId]
+                    localEndpoint, remoteEndpoint, secret, dataCbFun, self.__loop,
                 )
                 self.__runningClientsConnMap[self.__runningClientsTrunkMap[trunkId]] = trunkId
                 self.__runningClientsTrunkMap[trunkId].sendAnnouncement(trunkId)
@@ -114,7 +116,7 @@ class TrunkingManager(object):
             return
 
         self.__dataCbFun(trunkId, msgId, msg)
-        
+
     def __ctlCbFun(self, connection, msg, cbCtx):
         if msg:
             trunkId = str(msg['trunk-id'])
@@ -136,12 +138,13 @@ class TrunkingManager(object):
             else:
                 log.error('control message from unknown connection %s ignored' % connection)
                 return
-                
+
             log.info('unregistering connection %s (trunk %s)' % (self.__runningServersTrunkMap[trunkId], trunkId))
             del self.__runningServersTrunkMap[trunkId]
             del self.__runningServersConnMap[connection]
 
     def addServer(self, localEndpoint, pingPeriod, secret):
         server.TrunkingSuperServer(
-            localEndpoint, secret, self.__proxyDataCbFun, self.__ctlCbFun, pingPeriod
+            localEndpoint, secret, self.__proxyDataCbFun, self.__ctlCbFun,
+            pingPeriod, self.__loop,
         )

@@ -4,77 +4,67 @@
 # Copyright (c) 2014-2019, Ilya Etingof <etingof@gmail.com>
 # License: https://www.pysnmp.com/snmpfwd/license.html
 #
+import asyncio
 import socket
-import asyncore
-import traceback
 import sys
+import traceback
 from snmpfwd import log, next, error
 from snmpfwd.trunking import protocol
 
 
-class TrunkingSuperServer(asyncore.dispatcher):
-    def __init__(self, localEndpoint, secret, dataCbFun, ctlCbFun, ctlCbCtx):
-        localAf, self.__localEndpoint = localEndpoint[0], localEndpoint[1:]
+class TrunkingSuperServer(object):
+    """Listener on the trunk-server side. Schedules `asyncio.Server` creation
+    on the running event loop; each accepted connection becomes a fresh
+    `TrunkingServer` protocol instance."""
+
+    def __init__(self, localEndpoint, secret, dataCbFun, ctlCbFun, ctlCbCtx, loop):
+        self.__localAf, self.__localHost, self.__localPort = localEndpoint
         self.__secret = secret
         self.__dataCbFun = dataCbFun
         self.__ctlCbFun = ctlCbFun
         self.__ctlCbCtx = ctlCbCtx
+        self.__loop = loop
+        self.__server = None
 
-        asyncore.dispatcher.__init__(self)
+        self.__start_task = self.__loop.create_task(self._start())
 
-        try: 
-            self.create_socket(localAf, socket.SOCK_STREAM)
-            self.socket.setsockopt(
-                socket.SOL_SOCKET, socket.SO_SNDBUF, 65535
+    async def _start(self):
+        try:
+            self.__server = await self.__loop.create_server(
+                lambda: TrunkingServer(
+                    (self.__localAf, self.__localHost, self.__localPort),
+                    self.__secret,
+                    self.__dataCbFun,
+                    self.__ctlCbFun,
+                    self.__ctlCbCtx,
+                ),
+                host=self.__localHost,
+                port=self.__localPort,
+                family=self.__localAf,
+                reuse_address=True,
             )
-            self.socket.setsockopt(
-                socket.SOL_SOCKET, socket.SO_RCVBUF, 65535
-            )
-            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self.bind(self.__localEndpoint)
-            self.listen(10)
-
-        except socket.error:
-            raise error.SnmpfwdError('%s socket error: %s' % (self, sys.exc_info()[1]))
-
-        log.info('%s: listening...' % self)
+            log.info('%s: listening...' % self)
+        except (OSError, socket.error):
+            log.error('%s socket error: %s' % (self, sys.exc_info()[1]))
 
     def __str__(self):
-        return '%s at %s' % (self.__class__.__name__, ':'.join([str(x) for x in self.__localEndpoint]))
-        
+        return '%s at %s:%s' % (
+            self.__class__.__name__, self.__localHost, self.__localPort)
+
     def __repr__(self):
-        return '%s(%r)' % (self.__class__.__name__, self.__localEndpoint)
-
-    # asyncore API
-
-    def handle_accept(self):
-        try:
-            sock, remoteEndpoint = self.accept()
-        except socket.error:
-            log.error('%s accept() failed: %s' % (self, sys.exc_info()[1]))
-            return
-
-        log.info('%s new connection from %s' % (self, ':'.join([str(x) for x in remoteEndpoint])))
-
-        TrunkingServer(sock,
-                       self.__localEndpoint, remoteEndpoint, self.__secret,
-                       self.__dataCbFun, self.__ctlCbFun, self.__ctlCbCtx)
-        
-    def handle_error(self, *info):
-        exc_info = sys.exc_info()
-        log.error('%s: error: %s' % (self, exc_info[1]))
-        if exc_info and not isinstance(exc_info[1], socket.error):
-            for line in traceback.format_exception(*exc_info):
-                log.error(line.replace('\n', ';'))
-        self.handle_close()
+        return '%s(%r)' % (
+            self.__class__.__name__,
+            (self.__localAf, self.__localHost, self.__localPort),
+        )
 
 
-class TrunkingServer(asyncore.dispatcher_with_send):
-    def __init__(self, sock, localEndpoint, remoteEndpoint, secret,
-                 dataCbFun, ctlCbFun, ctlCbCtx):
-        self.__localEndpoint = localEndpoint
-        self.__remoteEndpoint = remoteEndpoint
+class TrunkingServer(asyncio.Protocol):
+    """Passive side of a trunk connection, created per inbound TCP accept.
+    Handles the full request/response/announcement/ping wire protocol; public
+    sendReq/sendRsp/sendPing API matches the asyncore version."""
+
+    def __init__(self, localEndpoint, secret, dataCbFun, ctlCbFun, ctlCbCtx):
+        self.__localAf, self.__localHost, self.__localPort = localEndpoint
         self.__secret = secret
         self.__dataCbFun = dataCbFun
         self.__ctlCbFun = ctlCbFun
@@ -82,64 +72,48 @@ class TrunkingServer(asyncore.dispatcher_with_send):
         self.__pendingReqs = {}
         self.__pendingCounter = 0
         self.__input = b''
-        self.socket = None  # asyncore strangeness
-        asyncore.dispatcher_with_send.__init__(self, sock)
+        self.__transport = None
+        self.__remoteHost = None
+        self.__remotePort = None
 
-        try: 
-            self.socket.setsockopt(
-                socket.SOL_SOCKET, socket.SO_SNDBUF, 65535
-            )
-            self.socket.setsockopt(
-                socket.SOL_SOCKET, socket.SO_RCVBUF, 65535
-            )
-            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-        except socket.error:
-            raise error.SnmpfwdError('%s socket error: %s' % (self, sys.exc_info()[1]))
-        else:
-            log.info('%s: serving new connection...' % (self,))
+    # asyncio.Protocol
 
-    def __str__(self):
-        return '%s at %s, peer %s' % (self.__class__.__name__, ':'.join([str(x) for x in self.__localEndpoint]), ':'.join([str(x) for x in self.__remoteEndpoint]))
+    def connection_made(self, transport):
+        self.__transport = transport
+        peer = transport.get_extra_info('peername')
+        if peer is not None and len(peer) >= 2:
+            self.__remoteHost, self.__remotePort = peer[0], peer[1]
+        sock = transport.get_extra_info('socket')
+        if sock is not None:
+            try:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 65535)
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 65535)
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+            except socket.error:
+                pass
+        log.info('TrunkingSuperServer at %s:%s new connection from %s:%s' % (
+            self.__localHost, self.__localPort,
+            self.__remoteHost, self.__remotePort))
+        log.info('%s: serving new connection...' % self)
 
-    def __repr__(self):
-        return '%s(%s, %s)' % (
-            self.__class__.__name__, self.__localEndpoint, self.__remoteEndpoint
-        )
-
-    def sendReq(self, req, cbFun, cbCtx):
-        msgId = next.getId()
-        self.send(protocol.prepareRequestData(msgId, req, self.__secret))
-        self.__pendingReqs[msgId] = cbFun, cbCtx
-        return msgId
-
-    def sendRsp(self, msgId, rsp):
-        self.send(protocol.prepareResponseData(msgId, rsp, self.__secret))
-
-    def sendPing(self, serial, cbFun, cbCtx):
-        msgId = next.getId()
-        self.send(protocol.preparePingData(msgId, serial, self.__secret))
-        self.__pendingReqs[msgId] = cbFun, cbCtx
-
-    def __ackPingCbFun(self, msgId, req):
-        self.send(protocol.preparePongData(msgId, req['serial'], self.__secret))
-
-    # asyncore API
-
-    def handle_read(self):
-        chunk = self.recv(65535)
-        if not chunk:
-            self.handle_close()
+    def data_received(self, chunk):
         self.__input += chunk
         while self.__input:
-            msgId, contentId, msg, self.__input = protocol.prepareDataElements(self.__input, self.__secret)
+            try:
+                msgId, contentId, msg, self.__input = protocol.prepareDataElements(
+                    self.__input, self.__secret
+                )
+            except error.SnmpfwdError:
+                log.error('%s: protocol error: %s' % (self, sys.exc_info()[1]))
+                self.close()
+                return
 
             if msgId is None:
                 if self.__pendingCounter > 5:
-                    log.error('%s: incomplete message pending for too long, closing connection' % (self,))
+                    log.error('%s: incomplete message pending for too long, closing connection' % self)
                     self.close()
                     return
-                else:
-                    self.__pendingCounter += 1
+                self.__pendingCounter += 1
                 return
 
             self.__pendingCounter = 0
@@ -151,7 +125,7 @@ class TrunkingServer(asyncore.dispatcher_with_send):
                     cbFun, cbCtx = self.__pendingReqs.pop(msgId)
                     cbFun(msgId, msg, cbCtx)
             elif contentId == protocol.MSG_TYPE_PING:
-                    self.__ackPingCbFun(msgId, msg)
+                self.__ackPingCbFun(msgId, msg)
             elif contentId == protocol.MSG_TYPE_PONG:
                 if msgId in self.__pendingReqs:
                     cbFun, cbCtx = self.__pendingReqs.pop(msgId)
@@ -160,16 +134,65 @@ class TrunkingServer(asyncore.dispatcher_with_send):
                 self.__ctlCbFun(self, msg, self.__ctlCbCtx)
             else:
                 log.error('%s: unknown trunk message content-id %s ignored' % (self, contentId))
-                
-    def handle_close(self):
-        log.info('%s: connection closed' % (self,))
-        self.__ctlCbFun(self, {}, self.__ctlCbCtx)
-        self.close()
-        
-    def handle_error(self, *info):
-        exc_info = sys.exc_info()
-        log.error('%s: connection with %s broken: %s' % (self, ':'.join([str(x) for x in self.__remoteEndpoint]), exc_info[1]))
-        if exc_info and not isinstance(exc_info[1], socket.error):
-            for line in traceback.format_exception(*exc_info):
+
+    def connection_lost(self, exc):
+        if exc is not None and not isinstance(exc, (socket.error, ConnectionError)):
+            log.error('%s: connection with %s:%s broken: %s' % (
+                self, self.__remoteHost, self.__remotePort, exc))
+            for line in traceback.format_exception(type(exc), exc, exc.__traceback__):
                 log.error(line.replace('\n', ';'))
-        self.handle_close()
+        log.info('%s: connection closed' % self)
+        # Notify TrunkingManager so it can unregister.
+        try:
+            self.__ctlCbFun(self, {}, self.__ctlCbCtx)
+        except Exception:
+            log.error('%s: ctlCbFun on close raised: %s' % (self, sys.exc_info()[1]))
+        self.__transport = None
+
+    # Public API — called from TrunkingManager
+
+    def sendReq(self, req, cbFun, cbCtx):
+        msgId = next.getId()
+        if self.__transport is None:
+            return msgId
+        self.__transport.write(protocol.prepareRequestData(msgId, req, self.__secret))
+        self.__pendingReqs[msgId] = cbFun, cbCtx
+        return msgId
+
+    def sendRsp(self, msgId, rsp):
+        if self.__transport is None:
+            return
+        self.__transport.write(protocol.prepareResponseData(msgId, rsp, self.__secret))
+
+    def sendPing(self, serial, cbFun, cbCtx):
+        msgId = next.getId()
+        if self.__transport is None:
+            return
+        self.__transport.write(protocol.preparePingData(msgId, serial, self.__secret))
+        self.__pendingReqs[msgId] = cbFun, cbCtx
+
+    def __ackPingCbFun(self, msgId, req):
+        if self.__transport is None:
+            return
+        self.__transport.write(protocol.preparePongData(msgId, req['serial'], self.__secret))
+
+    def close(self):
+        if self.__transport is not None:
+            try:
+                self.__transport.close()
+            except Exception:
+                pass
+
+    def __str__(self):
+        return '%s at %s:%s, peer %s:%s' % (
+            self.__class__.__name__,
+            self.__localHost, self.__localPort,
+            self.__remoteHost, self.__remotePort,
+        )
+
+    def __repr__(self):
+        return '%s(%s, %s)' % (
+            self.__class__.__name__,
+            (self.__localAf, self.__localHost, self.__localPort),
+            (self.__remoteHost, self.__remotePort),
+        )
