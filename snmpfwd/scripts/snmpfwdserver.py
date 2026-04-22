@@ -235,21 +235,29 @@ def main():
                         contextEngineId, contextName, pduVersion, pdu,
                         maxSizeResponseScopedPDU, stateReference):
 
-            # For confirmed-class notifications (INFORM) delegate to
-            # pysnmp's base process_pdu first — it builds the Response,
-            # dispatches it back to the original sender via
-            # return_response_pdu(), and then calls our no-op cbFun.
-            # Semantically the proxy's ack means "received, will try to
-            # forward"; end-to-end confirmation (proxy only ack's when
-            # the downstream has ack'd) is deferred to Phase 3B, see
-            # docs/PORTING-NOTES.md.
-            if pdu.tagSet in rfc3411.CONFIRMED_CLASS_PDUS:
-                super().process_pdu(
-                    snmpEngine, messageProcessingModel,
-                    securityModel, securityName, securityLevel,
-                    contextEngineId, contextName, pduVersion, pdu,
-                    maxSizeResponseScopedPDU, stateReference,
-                )
+            # Phase 3B: end-to-end confirmed INFORM. For confirmed-class
+            # PDUs we DO NOT send an ack here — instead we stash pysnmp's
+            # message-dispatcher state (stateReference + security/MP
+            # context + the original request-id via the PDU itself) and
+            # defer the ack until trunkCbFun receives the downstream
+            # response. On downstream failure the ack is skipped and the
+            # original sender retransmits; that's RFC-strict INFORM
+            # semantics for a proxy.
+            is_confirmed = pdu.tagSet in rfc3411.CONFIRMED_CLASS_PDUS
+            ack_ctx = None
+            if is_confirmed:
+                ack_ctx = {
+                    'messageProcessingModel': messageProcessingModel,
+                    'securityModel': securityModel,
+                    'securityName': securityName,
+                    'securityLevel': securityLevel,
+                    'contextEngineId': contextEngineId,
+                    'contextName': contextName,
+                    'pduVersion': pduVersion,
+                    'maxSizeResponseScopedPDU': maxSizeResponseScopedPDU,
+                    'stateReference': stateReference,
+                    'requestPdu': pdu,
+                }
 
             trunkReq = gCurrentRequestContext.copy()
 
@@ -293,8 +301,8 @@ def main():
 
             for trunkId in trunkIdList:
 
-                # TODO: pass messageProcessingModel to respond
-                cbCtx = pluginIdList, trunkId, trunkReq, snmpEngine, stateReference, reqCtx
+                cbCtx = (pluginIdList, trunkId, trunkReq, snmpEngine,
+                         stateReference, reqCtx, ack_ctx)
 
                 try:
                     msgId = trunkingManager.sendReq(trunkId, trunkReq, self.trunkCbFun, cbCtx)
@@ -306,7 +314,7 @@ def main():
                 log.debug('received SNMP message, forwarded as trunk message #%s' % msgId, ctx=logCtx)
 
         def trunkCbFun(self, msgId, trunkRsp, cbCtx):
-            pluginIdList, trunkId, trunkReq, snmpEngine, stateReference, reqCtx = cbCtx
+            pluginIdList, trunkId, trunkReq, snmpEngine, stateReference, reqCtx, ack_ctx = cbCtx
 
             for key in tuple(trunkRsp):
                 if key != 'callflow-id':
@@ -317,8 +325,9 @@ def main():
 
             logCtx = LazyLogString(trunkReq, trunkRsp)
 
-            if trunkRsp['client-error-indication']:
-                log.info('received trunk message #%s, remote end reported error-indication "%s", NOT responding' % (msgId, trunkRsp['client-error-indication']), ctx=logCtx)
+            downstream_err = trunkRsp['client-error-indication']
+            if downstream_err:
+                log.info('received trunk message #%s, remote end reported error-indication "%s", NOT responding' % (msgId, downstream_err), ctx=logCtx)
             else:
                 if 'client-snmp-pdu' not in trunkRsp:
                     log.debug('received trunk message #%s -- unconfirmed SNMP message' % msgId, ctx=logCtx)
@@ -340,24 +349,50 @@ def main():
 
                 log.debug('received trunk message #%s, forwarded as SNMP message' % msgId, ctx=logCtx)
 
-                # TODO: implement response part
+            # Phase 3B: if this was an INFORM, ack the original sender now
+            # that we've heard from the downstream. On downstream error
+            # indication (timeout / unreachable / auth-fail), we skip the
+            # ack deliberately so the sender can retry — RFC-strict
+            # semantic for a proxy.
+            if ack_ctx is not None and not downstream_err:
+                self._ack_inform(snmpEngine, ack_ctx)
+            elif ack_ctx is not None:
+                log.debug(
+                    'INFORM downstream failed (%s); skipping ack to the '
+                    'original sender' % downstream_err, ctx=logCtx,
+                )
 
-                # # Agent-side API complies with SMIv2
-                # if messageProcessingModel == 0:
-                #     PDU = rfc2576.v2ToV1(PDU, origPdu)
-                #
-                # statusInformation = {}
-                #
-                # # 3.4.3
-                # try:
-                #     snmpEngine.msgAndPduDsp.returnResponsePdu(
-                #         snmpEngine, messageProcessingModel, securityModel,
-                #         securityName, securityLevel, contextEngineId,
-                #         contextName, pduVersion, rspPDU, maxSizeResponseScopedPDU,
-                #         stateReference, statusInformation)
-                #
-                # except error.StatusInformation:
-                #         log.error('processPdu: stateReference %s, statusInformation %s' % (stateReference, sys.exc_info()[1]))
+        @staticmethod
+        def _ack_inform(snmpEngine, ack_ctx):
+            """Build an ack ResponsePDU for an INFORM using the pysnmp
+            message-dispatcher state we stashed at process_pdu time, and
+            dispatch it back to the original sender. Mirrors the
+            confirmed-class branch of pysnmp's NotificationReceiver
+            base."""
+            reqPdu = ack_ctx['requestPdu']
+            # v2 path only — INFORM doesn't exist in SNMPv1.
+            rspPDU = v2c.apiPDU.get_response(reqPdu)
+            v2c.apiPDU.set_error_status(rspPDU, 'noError')
+            v2c.apiPDU.set_error_index(rspPDU, 0)
+            v2c.apiPDU.set_varbinds(rspPDU, v2c.apiPDU.get_varbinds(reqPdu))
+
+            try:
+                snmpEngine.message_dispatcher.return_response_pdu(
+                    snmpEngine,
+                    ack_ctx['messageProcessingModel'],
+                    ack_ctx['securityModel'],
+                    ack_ctx['securityName'],
+                    ack_ctx['securityLevel'],
+                    ack_ctx['contextEngineId'],
+                    ack_ctx['contextName'],
+                    ack_ctx['pduVersion'],
+                    rspPDU,
+                    ack_ctx['maxSizeResponseScopedPDU'],
+                    ack_ctx['stateReference'],
+                    {},
+                )
+            except Exception:
+                log.error('INFORM ack dispatch failed: %s' % sys.exc_info()[1])
 
     class LogString(LazyLogString):
 

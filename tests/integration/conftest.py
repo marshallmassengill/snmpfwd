@@ -382,12 +382,24 @@ class SnmpfwdTrapProxy:
 
 
 @pytest.fixture
-def snmpfwd_trap_proxy(
-    tmp_path: Path, snmptrapd_backend: SnmptrapdBackend
+def dead_snmptrapd_backend(tmp_path: Path) -> Iterator[SnmptrapdBackend]:
+    """Returns a SnmptrapdBackend whose UDP port is free — nothing is
+    listening on it. Used to simulate a downstream that never acks, for
+    verifying snmpfwd's retry/timeout handling on the INFORM path."""
+    port = free_udp_port()
+    yield SnmptrapdBackend(
+        address=f"127.0.0.1:{port}",
+        port=port,
+        community="public",
+        log_path=tmp_path / "dead-snmptrapd-traps.log",
+    )
+
+
+def _spawn_snmpfwd_trap_proxy(
+    *, tmp_path: Path, backend: SnmptrapdBackend,
 ) -> Iterator[SnmpfwdTrapProxy]:
-    """Trap-forwarding topology: snmpfwd-server receives TRAPv2 on an
-    ephemeral UDP port, trunks to snmpfwd-client, which re-emits them to
-    snmptrapd on another ephemeral port."""
+    """Shared boot path used by snmpfwd_trap_proxy and
+    snmpfwd_trap_proxy_dead_backend."""
     listen_community = "public"
     listen_port = free_udp_port()
     trunk_port = free_tcp_port()
@@ -403,8 +415,8 @@ def snmpfwd_trap_proxy(
     ))
     client_conf.write_text(render_client_trap_conf(
         snmp_engine_id=engine_id,
-        backend_community=snmptrapd_backend.community,
-        backend_port=snmptrapd_backend.port,
+        backend_community=backend.community,
+        backend_port=backend.port,
         trunk_port=trunk_port,
     ))
 
@@ -440,7 +452,7 @@ def snmpfwd_trap_proxy(
             ready_timeout=15.0,
         )
         yield SnmpfwdTrapProxy(
-            backend=snmptrapd_backend,
+            backend=backend,
             listen_address=f"127.0.0.1:{listen_port}",
             listen_port=listen_port,
             listen_community=listen_community,
@@ -452,6 +464,26 @@ def snmpfwd_trap_proxy(
         if server_proc is not None:
             server_proc.terminate()
         client_proc.terminate()
+
+
+@pytest.fixture
+def snmpfwd_trap_proxy_dead_backend(
+    tmp_path: Path, dead_snmptrapd_backend: SnmptrapdBackend,
+) -> Iterator[SnmpfwdTrapProxy]:
+    """Trap-forwarding proxy whose downstream is unreachable (client's
+    backend port is free). For INFORM tests that exercise the proxy's
+    no-ack-on-downstream-failure path."""
+    yield from _spawn_snmpfwd_trap_proxy(tmp_path=tmp_path, backend=dead_snmptrapd_backend)
+
+
+@pytest.fixture
+def snmpfwd_trap_proxy(
+    tmp_path: Path, snmptrapd_backend: SnmptrapdBackend
+) -> Iterator[SnmpfwdTrapProxy]:
+    """Trap-forwarding topology: snmpfwd-server receives TRAPv2 on an
+    ephemeral UDP port, trunks to snmpfwd-client, which re-emits them to
+    snmptrapd on another ephemeral port."""
+    yield from _spawn_snmpfwd_trap_proxy(tmp_path=tmp_path, backend=snmptrapd_backend)
 
 
 @pytest.fixture

@@ -261,29 +261,28 @@ It looks vestigial (lambda that returns the transport-domain) but the dispatcher
 
 ---
 
-# Phase 3B — end-to-end INFORM confirmation (design sketch)
+# Phase 3B — end-to-end INFORM confirmation (shipped)
 
-Phase 3A ships INFORM forwarding with **immediate ack**: the proxy tells the original INFORM sender "received, will try to forward" the moment a confirmed-class PDU arrives, regardless of whether the downstream eventually acks. That matches how most Unix SNMP proxies behave, but it isn't RFC-strict — the sender may consider an INFORM delivered when it wasn't.
+**Status:** implemented. The proxy now acks the original INFORM sender only after the downstream has acked the proxy. On downstream failure (timeout / unreachable / auth-fail), the ack is skipped so the sender can retry — RFC-strict semantic for a proxy.
 
-**Phase 3B's goal:** proxy only acks the original INFORM sender *after* the downstream has acked the proxy, so end-to-end delivery is confirmed before the original sender's INFORM is considered complete.
+Design decisions taken in the implementation:
 
-What needs to change, roughly:
+1. **Trunk wire protocol:** unchanged. The existing `Response` message's `error-indication` + `snmp-pdu` fields already carry what the server needs. snmpfwd-client was already sending `error-indication='<pysnmp errorIndication>'` on downstream failure via `notificationOriginator.send_pdu(..., snmpCbFun, cbCtx)`'s callback — that payload was just being logged-and-ignored on the server side before. No protocol bump needed.
 
-1. **Trunk wire protocol.** `Response` message needs to carry the pysnmp-side `errorIndication` (timeout / unreachable / etc.) plus the original-sender's `stateReference` so the server can route the response back. The current Response format has `error-indication` + `snmp-pdu` — likely enough if we also carry a correlation id that keys into the server's pending-INFORM table.
+2. **Server side (`snmpfwdserver.py`):** `NotificationReceiver.process_pdu` stashes `(stateReference, messageProcessingModel, securityModel, securityName, securityLevel, contextEngineId, contextName, pduVersion, maxSizeResponseScopedPDU, requestPdu)` into the cbCtx tuple passed to `trunkingManager.sendReq(...)`. `trunkCbFun` unpacks that on the way back out and calls `snmpEngine.message_dispatcher.return_response_pdu(...)` with a fresh `ResponsePDU` built from the stashed `requestPdu` (using `v2c.apiPDU.get_response()` which copies the original request-id so the sender's message-dispatcher matches it).
 
-2. **Server side (`snmpfwdserver.py`).** The `NotificationReceiver.process_pdu` override stops calling `super().process_pdu(...)` immediately for CONFIRMED_CLASS PDUs. Instead, it stashes `(stateReference, messageProcessingModel, securityModel, …)` in a per-callflow dict, forwards the INFORM over the trunk, and defers the ack. When `NotificationReceiver.trunkCbFun` fires with the downstream's response, it pops the stashed state and builds the ack from it using the pysnmp-4-style `snmpEngine.msgAndPduDsp.returnResponsePdu(…)` (or the pysnmp-7 equivalent `snmpEngine.message_dispatcher.return_response_pdu(…)`).
+3. **Client side (`snmpfwdclient.py`):** unchanged. Already did the right thing — forwards downstream, waits for ack, sends trunk Response with `error-indication` populated on failure.
 
-3. **Client side (`snmpfwdclient.py`).** Already does the right thing — `notificationOriginator.send_pdu(snmpEngine, peerId, ctxEngineId, ctxName, pdu, snmpCbFun, cbCtx)` fires `snmpCbFun` when the downstream acks or times out, and `snmpCbFun` sends the response over the trunk with `error-indication` populated on failure. No change beyond what's already there.
+4. **Timeout handling: strict mode.** On downstream failure the ack is skipped. The original INFORM sender's retry logic kicks in. This amplifies load on pathological downstreams, but it's RFC-strict and keeps the semantic clean. If a user ever wants optimistic mode, it would be a config flag that picks between skip and ack-anyway in `trunkCbFun`.
 
-4. **Timeout handling.** `pysnmp`'s NotificationOriginator has a built-in timeout per target (`snmp-peer-timeout` in our config). If that fires, `snmpCbFun` receives `errorIndication = 'noResponse'` or similar. Decision point: do we ack the sender anyway (optimistic) or NOT ack (strict)? Strict is semantically correct but means the original INFORM sender retries through the proxy — amplifying the load. Optimistic papers over the failure but matches user expectations.
+5. **Duplicate handling:** not addressed. If the downstream is slow and the sender retries before the first INFORM's ack propagates, the proxy forwards the retry as a separate trunk message. That's no worse than SNMP without a proxy and matches how most proxies behave.
 
-5. **Retry / duplicate handling.** INFORM senders retry if they don't see an ack. With deferred ack, a slow downstream causes multiple proxy-level forwards of the same INFORM. Options: deduplicate on callflow-id (but senders use their own request-ids), deduplicate on sender-addr + request-id, or let duplicates pass through (simplest).
+6. **State cleanup:** relies on pysnmp's message dispatcher — when `return_response_pdu` gets called (success path), pysnmp releases its internal state keyed on `stateReference`. On failure where we never call `return_response_pdu`, pysnmp's state for that incoming INFORM is orphaned. In practice pysnmp's per-message state is small and gets garbage-collected; for very-long-running deployments with many failing downstream INFORMs this could leak, but not in a way that's tested or observed. Future: add an explicit release-without-response path if this ever becomes a problem.
 
-6. **State cleanup.** The pending-INFORM dict on the server needs TTL eviction so runaway senders don't grow it without bound. Keyed by `(peer-address, request-id)` or the pysnmp stateReference.
+7. **The "no-op cbFun" from 3A is still passed** to `NotificationReceiver(snmpEngine, _inform_ack_cb)` — 3B doesn't call `super().process_pdu(...)` at all, so the cbFun is never invoked in practice, but we keep the argument populated for defensive reasons. It documents that this slot exists and is intentionally unused.
 
-Testing should extend `test_inform.py` with cases that confirm:
-- downstream ack propagates back to original sender (happy path);
-- downstream timeout → server times out original sender (strict mode) OR acks anyway (optimistic mode);
-- concurrent INFORMs don't cross-mix their pending state.
-
-The Phase 3A implementation is forward-compatible with this design — `NotificationReceiver.process_pdu` already captures everything into `trunkReq` and the trunk protocol already carries `callflow-id`. What's missing is the server-side stash and the trunk-to-ack plumbing in `NotificationReceiver.trunkCbFun` (currently `# TODO: implement response part` and commented out).
+Integration tests:
+- `test_inform.py::test_inform_is_acked_by_proxy` — end-to-end happy path (downstream up, ack propagates).
+- `test_inform.py::test_inform_forwards_to_backend` — INFORM payload arrives at snmptrapd alongside the ack.
+- `test_inform.py::test_inform_server_log_shows_forwarding` — server records InformRequest handling.
+- `test_inform_downstream.py::test_inform_no_ack_when_downstream_unreachable` — downstream dead, proxy logs "NOT responding", `snmpinform` on the sender sees a timeout.
