@@ -10,7 +10,6 @@ import traceback
 import sys
 from snmpfwd import log, next, error
 from snmpfwd.trunking import protocol
-from pyasn1.compat.octets import null
 
 
 class TrunkingClient(asyncore.dispatcher_with_send):
@@ -23,8 +22,8 @@ class TrunkingClient(asyncore.dispatcher_with_send):
         self.__dataCbFun = dataCbFun
         self.__pendingReqs = {}
         self.__pendingCounter = 0
-        self.__input = null
-        self.__announcementData = null
+        self.__input = b''
+        self.__announcementData = b''
 
         if localAf != remoteAf:
             raise error.SnmpfwdError('%s: mismatching address family')
@@ -87,7 +86,7 @@ class TrunkingClient(asyncore.dispatcher_with_send):
 
         if self.__announcementData:
             self.send(self.__announcementData)
-            self.__announcementData = null
+            self.__announcementData = b''
             log.debug('%s: trunk announcement sent' % (self,))
 
         log.info('%s: client is now connected' % (self,))

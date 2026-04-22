@@ -10,7 +10,6 @@ import traceback
 import sys
 from snmpfwd import log, next, error
 from snmpfwd.trunking import protocol
-from pyasn1.compat.octets import null
 
 
 class TrunkingSuperServer(asyncore.dispatcher):
@@ -82,7 +81,7 @@ class TrunkingServer(asyncore.dispatcher_with_send):
         self.__ctlCbCtx = ctlCbCtx
         self.__pendingReqs = {}
         self.__pendingCounter = 0
-        self.__input = null
+        self.__input = b''
         self.socket = None  # asyncore strangeness
         asyncore.dispatcher_with_send.__init__(self, sock)
 
