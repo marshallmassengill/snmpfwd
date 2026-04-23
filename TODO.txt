@@ -2,7 +2,6 @@
 * more defaulted configuration options
 * add more configuration examples
 * add some drawings explaining network topology in different configurations
-* unify network endpoint string parser defaulting port part
 * implement PDU split at content map
 * formalize request splitting-merging logic
 * improve logging plugin to expand snmp-* options in log file path

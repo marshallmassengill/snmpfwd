@@ -7,40 +7,35 @@
 import re
 import socket
 
+from snmpfwd.endpoint import parse_optional_port
 from snmpfwd.error import SnmpfwdError
 
 
-IP_TEMPLATES = [
-    (socket.AF_INET, r'^([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+):([0-9]+)$|^([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)$')
-]
+_IPV4_RE = re.compile(r'^([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)(?::([0-9]+))?$')
 
-if socket.has_ipv6:
-    IP_TEMPLATES.append(
-        (socket.AF_INET6, r'^\[([0-9:]+?)\]:([0-9]+)$|^\[([0-9:]+?)\]$')
-    )
+# Bracketed IPv6 host with an optional :port suffix. Matches
+# snmpfwd.endpoint._IPV6_HOST_PORT_RE so both parsers accept the same
+# spelling of an IPv6 endpoint.
+_IPV6_RE = (
+    re.compile(r'^\[([0-9A-Fa-f:.]+)\](?::([0-9]+))?$')
+    if socket.has_ipv6 else None
+)
 
 
 def parseTrunkEndpoint(address, defaultPort=0):
-
-    for af, pattern in IP_TEMPLATES:
-
-        hp = re.split(pattern, address, maxsplit=1)
-        if len(hp) == 5:
-            if hp[1]:
-                h, p = hp[1:3]
-
-            elif hp[3]:
-                h, p = hp[3], defaultPort
-
-            else:
-                continue
-
-            try:
-                p = int(p)
-
-            except (ValueError, IndexError):
-                raise SnmpfwdError('bad port specification: %s' % (address,))
-
-            return af, h, p
-
+    m = _IPV4_RE.match(address)
+    if m:
+        return (
+            socket.AF_INET,
+            m.group(1),
+            parse_optional_port(m.group(2), defaultPort, context=address),
+        )
+    if _IPV6_RE is not None:
+        m = _IPV6_RE.match(address)
+        if m:
+            return (
+                socket.AF_INET6,
+                m.group(1),
+                parse_optional_port(m.group(2), defaultPort, context=address),
+            )
     raise SnmpfwdError('bad address specification: %s' % (address,))

@@ -47,6 +47,37 @@ def test_ipv6_bracketed_host_and_port():
     assert port == 1161
 
 
+def test_ipv6_bracketed_host_default_port():
+    # Previously the IPv6 branch required an explicit port and raised.
+    (host, port), macro = endpoint.parseTransportAddress(
+        UDP6, '[::1]', transportOptions=[], defaultPort=161)
+    assert host == '::1'
+    assert port == 161
+    assert macro is None
+
+
+def test_ipv6_hex_host_and_link_local():
+    # `[fe80::1]` (hex letters) used to be rejected by the trunk-endpoint
+    # regex; parseTransportAddress rejected it too since both rely on the
+    # bracketed-host form.
+    (host, port), _ = endpoint.parseTransportAddress(
+        UDP6, '[fe80::1]:161', transportOptions=[])
+    assert host == 'fe80::1'
+    assert port == 161
+
+
+def test_ipv6_bad_port_raises():
+    with pytest.raises(SnmpfwdError):
+        endpoint.parseTransportAddress(
+            UDP6, '[::1]:notaport', transportOptions=[])
+
+
+def test_ipv6_malformed_raises():
+    with pytest.raises(SnmpfwdError):
+        endpoint.parseTransportAddress(
+            UDP6, 'no-brackets-here', transportOptions=[])
+
+
 def test_transparent_proxy_macro_pass_through():
     (host, port), macro = endpoint.parseTransportAddress(
         UDP4, '${dest}', transportOptions=['transparent-proxy'])
@@ -87,6 +118,23 @@ def test_trunk_ipv6_bracketed():
     assert af == socket.AF_INET6
     assert host == '::1'
     assert port == 30301
+
+
+@pytest.mark.skipif(not socket.has_ipv6, reason='no IPv6 support on this host')
+def test_trunk_ipv6_default_port():
+    af, host, port = parseTrunkEndpoint('[::1]', defaultPort=30201)
+    assert af == socket.AF_INET6
+    assert host == '::1'
+    assert port == 30201
+
+
+@pytest.mark.skipif(not socket.has_ipv6, reason='no IPv6 support on this host')
+def test_trunk_ipv6_hex_letters_accepted():
+    # The prior regex used [0-9:]+? which rejected any hex letter in
+    # the host; fe80:: style addresses didn't match.
+    af, host, _ = parseTrunkEndpoint('[fe80::1]:30301')
+    assert af == socket.AF_INET6
+    assert host == 'fe80::1'
 
 
 def test_trunk_bad_address_raises():

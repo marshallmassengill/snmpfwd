@@ -50,6 +50,15 @@ Features:
   flag still defaults to a single stderr sink. `log.setLogger`'s
   semantics change to match — `force=True` clears existing handlers,
   `force=False` (the new default) appends.
+- `endpoint.parseTransportAddress` and
+  `trunking.endpoint.parseTrunkEndpoint` now share a single
+  `parse_optional_port` helper. Default-port handling and error
+  reporting are identical between the two parsers; both accept
+  "bracketed IPv6 host without a port" (e.g. `[::1]`,
+  `[fe80::1]`), which the trunk parser already tolerated and the
+  SNMP-endpoint parser previously rejected. Fixed a latent bug in
+  the trunk IPv6 regex that rejected any hex letter in the host
+  (`[fe80::1]:30301` now parses).
 
 Breaking config changes (client side):
 - Client-config option prefix `orig-*` renamed to `server-*` for
