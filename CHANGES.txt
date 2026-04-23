@@ -1,4 +1,115 @@
 
+Revision 0.5.0, released 23-04-2026
+-----------------------------------
+
+Major rebuild of the 0.4.5 codebase. Python 3.11+ is now the minimum;
+the asyncore-based pysnmp 4.x dependency has been retired.
+
+Platform / dependencies:
+- Ported trunking from `asyncore.dispatcher` to `asyncio.Protocol` /
+  `asyncio.Server`. Wire protocol unchanged (`PROTOCOL_VERSION = 3`),
+  so no on-the-wire incompatibility.
+- Switched to pysnmp-lextudio 7.x and pyasn1 0.6.x. Every API rename
+  applied (handle_management_operation, process_pdu, send_pdu,
+  release_state_information, apiPDU.get_varbinds / set_varbinds,
+  rfc2576.v1_to_v2, ...). camelCase aliases that pysnmp 7 still ships
+  are preserved; those it removed got explicit call-site updates.
+- Dropped `pyasn1.compat.octets` (removed upstream in pyasn1 0.5+).
+- Dropped UNIX-domain SNMP transport — pysnmp 7's asyncio carrier has
+  no equivalent. Not used by any example config.
+- Python floor raised to 3.11 to gain clean asyncio, modern type
+  hints, and to align with pysnmp-lextudio's own floor. Tested on
+  3.11 / 3.12 / 3.13.
+
+Features:
+- SIGHUP-triggered config reload of routing maps and classifier
+  lists (bootstrap.install_reload_handler). Trunks, credentials, and
+  plugin modules still require a restart. Failed reloads keep the
+  previous routing untouched.
+- INFORM forwarding with end-to-end confirmation. The proxy ack's
+  the original INFORM sender only after the downstream has ack'd the
+  proxy; on downstream failure the ack is skipped so the sender can
+  retry (RFC-strict proxy semantic).
+- Runtime counters with periodic log dump. Auth failures, routing
+  misses, forwarded request/notification counts, INFORM ack outcomes
+  (success / skipped), and trunk connection up/down are tallied and
+  emitted via `runtime counters: ...` log lines. Interval is 60s by
+  default, overridable via the SNMPFWD_METRICS_INTERVAL env var.
+- SIGHUP is now reload (not terminate). SIGTERM/SIGINT/SIGQUIT stop
+  the process via `loop.add_signal_handler` instead of the legacy
+  raise-during-syscall `signal.signal` pattern, so shutdown plays
+  cleanly with asyncio.
+
+Internals:
+- CLI migrated from getopt to argparse. All legacy flag names and
+  short forms preserved (`-h`, `-v`, `--debug-snmp`, `--debug-asn1`,
+  `--daemonize`, `--process-user`, `--process-group`, `--pid-file`,
+  `--logging-method`, `--log-level`, `--config-file`).
+- The ~900-line `main()` functions in snmpfwd-server and
+  snmpfwd-client now delegate their shared setup (CLI + logging,
+  config load, plugin manager init, transport dispatcher, trunk
+  configuration, daemonize + mainloop) to `snmpfwd/bootstrap.py`.
+  Script files shrank by ~100 lines each while the common paths live
+  in one place.
+- `snmpfwd/log.py` rewritten around stock `logging.Logger`. The
+  homemade `msg = lambda x: None` sentinel and the LOG_* integer
+  level constants are gone; file-sink output format preserved
+  byte-for-byte.
+- `snmpfwd/cli.py` new: shared ArgumentParser construction.
+- `snmpfwd/metrics.py` new: counter registry + log_deltas timer.
+- `snmpfwd/target_override.py` new: `lcd.get_target_address`
+  monkey-patch extracted from snmpfwdclient.main() so it can be
+  unit-tested.
+- `snmpfwd/msgid.py` new (renamed from `snmpfwd/next.py` — the old
+  name shadowed the `next()` builtin inside the package).
+
+Fixes:
+- `requestObserver` and `trunkCbFun` built regex-match keys by
+  `str()`-concatenating pysnmp OctetString values. pysnmp 7
+  generates engine-ids as random bytes; about 1 in 43 contains 0x0a
+  or 0x0d, which stops Python's default `.` regex from matching
+  `.*?#.*?`. Fix: use `prettyPrint()` for the printable hex form,
+  which is stable regardless of the byte draw.
+- `NotificationReceiver.process_pdu`'s "no route configured" branch
+  still called `self.releaseStateInformation(...)` (Phase-1 rename
+  miss). pysnmp 7 raises AttributeError, surfacing as an uncaught
+  callback exception and cascading timeouts.
+- `securityAuditObserver` still called
+  `variables['transportAddress'].getLocalAddress()`. pysnmp 7's
+  asyncio carrier delivers a plain (host, port) tuple, so the
+  observer silently raised AttributeError inside pysnmp's observer
+  dispatch — auth-failure log lines had been missing since the
+  port.
+- `CommandResponderBase.process_pdu` unconditionally calls
+  `release_state_information` at return in pysnmp 7 (not the case in
+  pysnmp 4.x). That broke snmpfwd's async forward-to-trunk flow.
+  Fix: subclass stashes the pending state on entry and re-inserts
+  before `send_pdu` from the async trunk callback.
+- `UdpAsyncioTransport()` with no args creates its own fresh
+  asyncio loop, separate from `AsyncioDispatcher.loop`. UDP transports
+  must now be constructed as `UdpTransport(loop=dispatcher.loop)`.
+
+Testing:
+- New `tests/integration/` harness (pytest-driven) spawning net-snmp
+  snmpd or snmpsim-lextudio as a backend and snmpfwd-server +
+  snmpfwd-client as subprocesses connected via ephemeral trunks.
+  Drives scenarios through the net-snmp CLI (snmpget, snmpgetnext,
+  snmpbulkget, snmpwalk, snmpinform, snmptrap).
+- New `tests/unit/` suite covering the pure-logic modules: cparser,
+  trunking protocol (encode/decode round-trips for all 5 message
+  types), trunking crypto (AES-CBC round-trips), endpoints, macros,
+  lazylog, plugin manager, target_override, metrics.
+- CI workflow across Python 3.11 / 3.12 / 3.13.
+
+Out of scope for 0.5.0 (flagged for a later release):
+- Transparent-proxy / virtual-interface integration test. Needs
+  Linux iptables TPROXY + root in the test environment, which
+  doesn't fit the current CI model. The code path (lcd monkey
+  patch) is unit-tested via `test_target_override.py` but not
+  exercised end-to-end.
+- Importlib-based plugin loading (current `exec()`-based loader
+  preserved to keep existing user plugins working).
+
 Revision 0.4.5, released 16-07-2024
 -----------------------------------
 
