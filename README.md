@@ -81,7 +81,7 @@ How to use SNMP proxy forwarder
 -------------------------------
 
 First you need to configure the tool. It is largely driven by
-[configuration files](https://docs.lextudio.com/snmpfwd/configuration/index.html)
+[configuration files](./docs/source/configuration/index.rst)
 written in a declarative mini-language. To help you get started, a
 [collection of example configs](./conf/) is included in this repository.
 
