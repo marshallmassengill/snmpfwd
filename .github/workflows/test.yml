@@ -25,15 +25,16 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install net-snmp CLI tools, snmpd, snmptrapd
-        # Debian's snmpd package ships both snmpd and snmptrapd. snmp
-        # provides snmpget / snmpwalk / snmpbulkget / snmptrap etc.
+        # On Ubuntu 24.04 (Noble) `snmptrapd` is its own apt package
+        # (it used to live inside `snmpd` on older Debian/Ubuntu). `snmp`
+        # still provides snmpget / snmpwalk / snmpbulkget / snmptrap.
         # Ensure /usr/sbin is on PATH for subsequent steps — some
         # GitHub Actions images omit it for the runner user.
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y --no-install-recommends snmp snmpd
+          sudo apt-get install -y --no-install-recommends snmp snmpd snmptrapd
           echo /usr/sbin >> "$GITHUB_PATH"
-          which snmpd snmptrapd || true
+          which snmpd snmptrapd
 
       - name: Install snmpfwd and test dependencies
         # Use `snmpsim` (canonical lextudio package, requires pysnmp 7.1+).
