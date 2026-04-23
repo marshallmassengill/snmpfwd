@@ -78,6 +78,33 @@ def test_rewrite_overrides_response_value(snmpfwd_proxy_rewrite):
     )
 
 
+def test_logger_plugin_templated_destination_creates_per_peer_file(
+    snmpfwd_proxy_logger_templated,
+):
+    """The logger plugin was given `destination = <dir>/${snmp-peer-address}.log`.
+    A single GET from 127.0.0.1:<port> should produce exactly that file
+    with the corresponding callflow log line inside."""
+    snmp_get(
+        target=snmpfwd_proxy_logger_templated.listen_address,
+        community=snmpfwd_proxy_logger_templated.listen_community,
+        oids=[SYS_DESCR],
+    )
+    files = sorted(snmpfwd_proxy_logger_templated.plugin_log_dir.iterdir())
+    assert files, (
+        'logger plugin produced no file under '
+        f'{snmpfwd_proxy_logger_templated.plugin_log_dir}'
+    )
+    # trunkReq's ${snmp-peer-address} carries the host only — port is
+    # exposed separately as ${snmp-peer-port}. Loopback is the fixed part
+    # we can assert without coupling the test to the ephemeral port.
+    names = [f.name for f in files]
+    assert '127.0.0.1.log' in names, f'expected 127.0.0.1.log, got {names}'
+    # The file contains a GetRequest line (log line template includes
+    # ${snmp-pdu-type}).
+    contents = ''.join(f.read_text() for f in files)
+    assert 'GetRequest' in contents, contents
+
+
 def test_rewrite_untouched_oid_passes_through(snmpfwd_proxy_rewrite):
     """sysLocation.0 is not matched by the rewrite rule — its value comes
     back unmodified from the backend."""

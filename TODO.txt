@@ -4,7 +4,6 @@
 * add some drawings explaining network topology in different configurations
 * implement PDU split at content map
 * formalize request splitting-merging logic
-* improve logging plugin to expand snmp-* options in log file path
 * migrate the logging plugin to use its own logger infrastructure
 * cross-link options in configuration docs
 * expose runtime counters as an SNMP table (periodic log dump is shipped)

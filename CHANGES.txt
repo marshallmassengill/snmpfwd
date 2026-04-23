@@ -50,6 +50,16 @@ Features:
   flag still defaults to a single stderr sink. `log.setLogger`'s
   semantics change to match — `force=True` clears existing handlers,
   `force=False` (the new default) appends.
+- `logger` plugin: the `[file] destination` option now accepts
+  `${...}` macros from the request's trunk-message context. The
+  first time a given resolved path is seen the plugin creates (and
+  caches) a TimedRotatingFileHandler for it, letting a single proxy
+  split logs per-peer / per-context / per-credential. Example:
+  `destination = /var/log/snmpfwd/${snmp-peer-address}.log`. Macros
+  that aren't in the context render as `_unknown` with a one-shot
+  warning so misconfigurations surface without flooding the log.
+  Filesystem-unsafe characters (`/ \\ : NUL space`) in macro values
+  are sanitised to `_`. Static paths with no macros behave unchanged.
 - `endpoint.parseTransportAddress` and
   `trunking.endpoint.parseTrunkEndpoint` now share a single
   `parse_optional_port` helper. Default-port handling and error

@@ -332,6 +332,65 @@ def snmpfwd_proxy_oidfilter(tmp_path: Path,
     )
 
 
+@dataclasses.dataclass
+class SnmpfwdProxyLoggerTemplated(SnmpfwdProxy):
+    plugin_log_dir: Path = None  # directory the plugin writes per-peer files into
+
+
+@pytest.fixture
+def snmpfwd_proxy_logger_templated(
+    tmp_path: Path, any_backend: SnmpBackend,
+) -> Iterator["SnmpfwdProxyLoggerTemplated"]:
+    """Server-side logger plugin configured with a ${snmp-peer-address}
+    destination template. Drives the per-path handler cache path."""
+    plugin_log_dir = tmp_path / "logger-plugin-out"
+    plugin_log_dir.mkdir()
+    logger_conf = tmp_path / "logger.ini"
+    logger_conf.write_text(
+        "[general]\n"
+        "method = file\n"
+        "level = INFO\n"
+        "\n"
+        "[file]\n"
+        "rotation = timed\n"
+        "timescale = D\n"
+        "interval = 1\n"
+        "backupcount = 1\n"
+        # Macro expansion target — the plugin must create one file per
+        # distinct snmp-peer-address that reaches the server.
+        f"destination = {plugin_log_dir}/${{snmp-peer-address}}.log\n"
+        "\n"
+        "[content]\n"
+        "template = ${callflow-id} ${snmp-peer-address} ${snmp-pdu-type}\n"
+        "pdus = GetRequest GetNextRequest GetBulkRequest Response\n"
+        "parentheses = \" \"\n"
+    )
+    spec = PluginSpec(
+        plugin_id="logger-per-peer",
+        plugin_module="logger",
+        plugin_options=f"config={logger_conf}",
+        modules_path=str(BUNDLED_PLUGINS_DIR),
+    )
+    for proxy in _spawn_snmpfwd_proxy(
+        tmp_path=tmp_path, backend=any_backend, server_plugin=spec,
+    ):
+        # Re-wrap the plain SnmpfwdProxy in the subclass carrying the log dir.
+        yield SnmpfwdProxyLoggerTemplated(
+            backend=proxy.backend,
+            listen_address=proxy.listen_address,
+            listen_port=proxy.listen_port,
+            listen_community=proxy.listen_community,
+            trunk_port=proxy.trunk_port,
+            server_log=proxy.server_log,
+            client_log=proxy.client_log,
+            server_config_path=proxy.server_config_path,
+            client_config_path=proxy.client_config_path,
+            server_pid=proxy.server_pid,
+            client_pid=proxy.client_pid,
+            plugin_log_dir=plugin_log_dir,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Trap forwarding: snmptrapd backend + trap-flavored proxy
 

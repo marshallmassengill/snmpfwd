@@ -8,14 +8,15 @@
 #
 import logging
 from logging import handlers
-import time
 import os
 import socket
+import time
 try:
     from ConfigParser import RawConfigParser, Error
 except ImportError:
     from configparser import RawConfigParser, Error
 from snmpfwd.plugins import status
+from snmpfwd.plugins.path_format import format_path
 from snmpfwd.error import SnmpfwdError
 from snmpfwd import log
 from pysnmp.proto.api import v2c
@@ -79,6 +80,14 @@ for moduleOption in moduleOptions:
         config.read(configFile)
 
 method = config.get('general', 'method')
+
+# When the file destination contains a ${...} macro we defer the
+# per-path handler creation to first-use and cache handlers by resolved
+# path, so the same proxy can emit e.g. /var/log/snmpfwd/<peer>.log
+# split by snmp-peer-address or snmp-peer-id.
+_file_template = None
+_file_handler_cache = {}
+
 if method == 'file':
 
     rotation = config.get('file', 'rotation')
@@ -87,12 +96,16 @@ if method == 'file':
 
         filename = config.get('file', 'destination')
 
-        handler = log.FileLogger.TimedRotatingFileHandler(
-            filename,
-            config.get('file', 'timescale'),
-            int(config.get('file', 'interval')),
-            int(config.get('file', 'backupcount'))
-        )
+        if '${' in filename:
+            _file_template = filename
+            handler = None  # no single static handler; per-path cache instead
+        else:
+            handler = log.FileLogger.TimedRotatingFileHandler(
+                filename,
+                config.get('file', 'timescale'),
+                int(config.get('file', 'interval')),
+                int(config.get('file', 'backupcount'))
+            )
 
     else:
         raise SnmpfwdError('%s: unknown rotation method %s' % (PLUGIN_NAME, rotation))
@@ -150,15 +163,15 @@ elif method == 'null':
 else:
     raise SnmpfwdError('%s: unknown logging method %s' % (PLUGIN_NAME, method))
 
+# Resolve log level once — the dynamic per-path file handler path also
+# needs it when `handler is None` and no static logger is attached below.
+_level_name = config.get('general', 'level').upper()
+try:
+    level = getattr(logging, _level_name)
+except AttributeError:
+    raise SnmpfwdError('%s: unknown log level %s' % (PLUGIN_NAME, _level_name))
+
 if handler:
-    level = config.get('general', 'level').upper()
-
-    try:
-        level = getattr(logging, level)
-
-    except AttributeError:
-        raise SnmpfwdError('%s: unknown log level %s' % (PLUGIN_NAME, level))
-
     handler.setLevel(level)
 
     # set logger level if this is a root logger (i.e. separate from snmpfwd)
@@ -239,9 +252,76 @@ def _format(template, pdu, context):
     return template
 
 
+# Track macros we've already warned about so a misconfigured destination
+# doesn't flood the log on every request.
+_warned_missing_macros = set()
+
+
+def _get_file_handler(resolved_path):
+    """Return a cached TimedRotatingFileHandler for `resolved_path`,
+    creating it (and any missing parent directories) on first use."""
+    existing = _file_handler_cache.get(resolved_path)
+    if existing is not None:
+        return existing
+
+    parent = os.path.dirname(resolved_path)
+    if parent and not os.path.isdir(parent):
+        try:
+            os.makedirs(parent, exist_ok=True)
+        except OSError as exc:
+            raise SnmpfwdError(
+                '%s: cannot create log directory %s: %s'
+                % (PLUGIN_NAME, parent, exc)
+            )
+
+    new_handler = log.FileLogger.TimedRotatingFileHandler(
+        resolved_path,
+        config.get('file', 'timescale'),
+        int(config.get('file', 'interval')),
+        int(config.get('file', 'backupcount'))
+    )
+    new_handler.setLevel(level)
+    _file_handler_cache[resolved_path] = new_handler
+    return new_handler
+
+
+# One logger instance per resolved log-file path. Using stock logging
+# this way lets each destination carry its own handler/rotation state.
+_per_path_loggers = {}
+
+
+def _emit_to_dynamic_path(message, context):
+    resolved, missing = format_path(_file_template, context)
+    for token in missing:
+        if token not in _warned_missing_macros:
+            _warned_missing_macros.add(token)
+            log.error(
+                '%s: macro %s referenced in [file] destination but not in '
+                'request context; falling back to "_unknown"'
+                % (PLUGIN_NAME, token)
+            )
+
+    path_logger = _per_path_loggers.get(resolved)
+    if path_logger is None:
+        path_logger = logging.getLogger('%s.%s' % (PLUGIN_NAME, resolved))
+        path_logger.setLevel(level)
+        # Avoid record propagation to the root logger — otherwise the
+        # per-path handler's output also gets delivered to whatever
+        # root handlers snmpfwd's own logger installed.
+        path_logger.propagate = False
+        path_logger.addHandler(_get_file_handler(resolved))
+        _per_path_loggers[resolved] = path_logger
+
+    path_logger.info(message)
+
+
 def processCommandRequest(pluginId, snmpEngine, pdu, trunkMsg, reqCtx):
     if pdu.tagSet in PDU_MAP:
-        logger.info(_format(template, pdu, trunkMsg))
+        message = _format(template, pdu, trunkMsg)
+        if _file_template is not None:
+            _emit_to_dynamic_path(message, trunkMsg)
+        else:
+            logger.info(message)
 
     return status.NEXT, pdu
 
