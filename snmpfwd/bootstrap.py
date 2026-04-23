@@ -224,6 +224,30 @@ def register_trunk_timers(
     )
 
 
+def register_metrics_timer(
+    transportDispatcher: AsyncioDispatcher,
+    interval_secs: Optional[int] = None,
+) -> None:
+    """Log deltas from `snmpfwd.metrics` every `interval_secs`. Cheap —
+    at worst one INFO line per interval containing the subset of
+    counters that changed since the previous tick. Nothing is emitted
+    when the proxy is idle.
+
+    Interval defaults to 60 seconds, overridable via the
+    `SNMPFWD_METRICS_INTERVAL` env variable (integer seconds). The env
+    var is how the integration tests ask for a short interval without
+    needing an extra CLI flag."""
+    from snmpfwd import metrics
+    if interval_secs is None:
+        try:
+            interval_secs = int(os.environ.get('SNMPFWD_METRICS_INTERVAL', '60'))
+        except ValueError:
+            interval_secs = 60
+    transportDispatcher.register_timer_callback(
+        metrics.log_deltas, interval_secs
+    )
+
+
 def _install_signal_handlers(loop) -> None:
     """Wire SIGTERM/SIGINT/SIGQUIT to stop the event loop. SIGHUP is
     deliberately excluded — `install_reload_handler` claims it for

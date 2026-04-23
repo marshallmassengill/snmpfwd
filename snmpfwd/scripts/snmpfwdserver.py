@@ -23,7 +23,7 @@ unix = None
 from pysnmp.proto import rfc1157, rfc1902, rfc1905, rfc3411
 from pysnmp.proto.api import v1, v2c
 from snmpfwd.error import SnmpfwdError
-from snmpfwd import log, macro, endpoint, bootstrap
+from snmpfwd import log, macro, endpoint, bootstrap, metrics
 from snmpfwd.plugins import status
 from snmpfwd.trunking.manager import TrunkingManager
 from snmpfwd.lazylog import LazyLogString
@@ -130,11 +130,13 @@ def main():
 
                 elif st == status.DROP:
                     log.debug('received SNMP message, plugin %s muted request' % pluginId, ctx=logCtx)
+                    metrics.increment(metrics.SERVER_PLUGINS_DROPPED)
                     self.release_state_information(stateReference)
                     return
 
                 elif st == status.RESPOND:
                     log.debug('received SNMP message, plugin %s forced immediate response' % pluginId, ctx=logCtx)
+                    metrics.increment(metrics.SERVER_PLUGINS_RESPONDED)
 
                     try:
                         self.send_pdu(snmpEngine, stateReference, pdu)
@@ -152,6 +154,7 @@ def main():
             trunkIdList = trunkReq['trunk-id-list']
             if trunkIdList is None:
                 log.error('no route configured', ctx=logCtx)
+                metrics.increment(metrics.SERVER_UNROUTABLE_REQUESTS)
                 self.release_state_information(stateReference)
                 return
 
@@ -166,6 +169,7 @@ def main():
                     log.error('received SNMP message, message not sent to trunk "%s"' % sys.exc_info()[1], ctx=logCtx)
                     return
 
+                metrics.increment(metrics.SERVER_REQUESTS_FORWARDED)
                 log.debug('received SNMP message, forwarded as trunk message #%s' % msgId, ctx=logCtx)
 
         def trunkCbFun(self, msgId, trunkRsp, cbCtx):
@@ -311,6 +315,7 @@ def main():
                     log.error('received SNMP message, message not sent to trunk "%s" %s' % (trunkId, sys.exc_info()[1]), ctx=logCtx)
                     return
 
+                metrics.increment(metrics.SERVER_NOTIFICATIONS_FORWARDED)
                 log.debug('received SNMP message, forwarded as trunk message #%s' % msgId, ctx=logCtx)
 
         def trunkCbFun(self, msgId, trunkRsp, cbCtx):
@@ -356,7 +361,9 @@ def main():
             # semantic for a proxy.
             if ack_ctx is not None and not downstream_err:
                 self._ack_inform(snmpEngine, ack_ctx)
+                metrics.increment(metrics.SERVER_INFORMS_ACKED)
             elif ack_ctx is not None:
+                metrics.increment(metrics.SERVER_INFORMS_ACK_SKIPPED)
                 log.debug(
                     'INFORM downstream failed (%s); skipping ack to the '
                     'original sender' % downstream_err, ctx=logCtx,
@@ -426,9 +433,18 @@ def main():
     def securityAuditObserver(snmpEngine, execpoint, variables, cbCtx):
         securityModel = variables.get('securityModel', 0)
 
+        # pysnmp 7's asyncio carrier delivers transportAddress as a plain
+        # (host, port) tuple without the old `.getLocalAddress()` helper,
+        # so we read the bind host/port from transportDomainBindAddr
+        # (populated at config load) the same way requestObserver does.
+        bindHost, bindPort = transportDomainBindAddr.get(
+            str(variables.get('transportDomain')), ('', 0)
+        )
+        peerHost, peerPort = variables['transportAddress'][0], variables['transportAddress'][1]
+
         logMsg = 'SNMPv%s auth failure' % securityModel
-        logMsg += ' at %s:%s' % variables['transportAddress'].getLocalAddress()
-        logMsg += ' from %s:%s' % variables['transportAddress']
+        logMsg += ' at %s:%s' % (bindHost, bindPort)
+        logMsg += ' from %s:%s' % (peerHost, peerPort)
 
         statusInformation = variables.get('statusInformation', {})
 
@@ -443,6 +459,7 @@ def main():
         except KeyError:
             pass
 
+        metrics.increment(metrics.SERVER_AUTH_FAILURES)
         log.error(logMsg)
 
     def usmRequestObserver(snmpEngine, execpoint, variables, cbCtx):
@@ -932,6 +949,7 @@ def main():
 
     bootstrap.configure_trunks(cfgTree, trunkingManager)
     bootstrap.register_trunk_timers(transportDispatcher, trunkingManager)
+    bootstrap.register_metrics_timer(transportDispatcher)
     bootstrap.install_reload_handler(transportDispatcher, reload_callback)
     bootstrap.run_dispatcher_loop(args, transportDispatcher)
 

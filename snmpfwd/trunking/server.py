@@ -8,7 +8,7 @@ import asyncio
 import socket
 import sys
 import traceback
-from snmpfwd import log, msgid, error
+from snmpfwd import log, msgid, error, metrics
 from snmpfwd.trunking import protocol
 
 
@@ -94,6 +94,7 @@ class TrunkingServer(asyncio.Protocol):
         log.info('TrunkingSuperServer at %s:%s new connection from %s:%s' % (
             self.__localHost, self.__localPort,
             self.__remoteHost, self.__remotePort))
+        metrics.increment(metrics.TRUNK_CONNECTIONS_UP)
         log.info('%s: serving new connection...' % self)
 
     def data_received(self, chunk):
@@ -141,6 +142,7 @@ class TrunkingServer(asyncio.Protocol):
                 self, self.__remoteHost, self.__remotePort, exc))
             for line in traceback.format_exception(type(exc), exc, exc.__traceback__):
                 log.error(line.replace('\n', ';'))
+        metrics.increment(metrics.TRUNK_CONNECTIONS_DOWN)
         log.info('%s: connection closed' % self)
         # Notify TrunkingManager so it can unregister.
         try:

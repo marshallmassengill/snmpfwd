@@ -8,7 +8,7 @@ import asyncio
 import socket
 import sys
 import traceback
-from snmpfwd import log, msgid, error
+from snmpfwd import log, msgid, error, metrics
 from snmpfwd.trunking import protocol
 
 
@@ -75,6 +75,7 @@ class TrunkingClient(asyncio.Protocol):
             transport.write(self.__announcementData)
             self.__announcementData = b''
             log.debug('%s: trunk announcement sent' % self)
+        metrics.increment(metrics.TRUNK_CONNECTIONS_UP)
         log.info('%s: client is now connected' % self)
 
     def data_received(self, chunk):
@@ -123,6 +124,8 @@ class TrunkingClient(asyncio.Protocol):
         else:
             log.info('%s: connection with %s:%s closed' % (
                 self, self.__remoteHost, self.__remotePort))
+        if self.isUp:
+            metrics.increment(metrics.TRUNK_CONNECTIONS_DOWN)
         self.isUp = False
         self.__transport = None
 

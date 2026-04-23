@@ -42,6 +42,11 @@ from .templates import (
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BUNDLED_PLUGINS_DIR = REPO_ROOT / "plugins"
 
+# Force the metrics log-deltas timer to fire every 2s in tests so
+# counter-observing tests don't wait 60s between dumps. See
+# snmpfwd.bootstrap.register_metrics_timer.
+_SNMPFWD_ENV = {**os.environ, "SNMPFWD_METRICS_INTERVAL": "2"}
+
 
 # ---------------------------------------------------------------------------
 # Backend: net-snmp snmpd
@@ -263,6 +268,7 @@ def _spawn_snmpfwd_proxy(
         log_path=tmp_path / "snmpfwd-client.stdouterr.log",
         ready=lambda: tcp_port_open("127.0.0.1", trunk_port),
         ready_timeout=15.0,
+        env=_SNMPFWD_ENV,
     )
     server_proc = None
     try:
@@ -277,6 +283,7 @@ def _spawn_snmpfwd_proxy(
             log_path=tmp_path / "snmpfwd-server.stdouterr.log",
             ready=lambda: log_contains(server_log, "client is now connected"),
             ready_timeout=15.0,
+            env=_SNMPFWD_ENV,
         )
         yield SnmpfwdProxy(
             backend=backend,
@@ -436,6 +443,7 @@ def _spawn_snmpfwd_trap_proxy(
         log_path=tmp_path / "snmpfwd-client.stdouterr.log",
         ready=lambda: tcp_port_open("127.0.0.1", trunk_port),
         ready_timeout=15.0,
+        env=_SNMPFWD_ENV,
     )
     server_proc = None
     try:
@@ -450,6 +458,7 @@ def _spawn_snmpfwd_trap_proxy(
             log_path=tmp_path / "snmpfwd-server.stdouterr.log",
             ready=lambda: log_contains(server_log, "client is now connected"),
             ready_timeout=15.0,
+            env=_SNMPFWD_ENV,
         )
         yield SnmpfwdTrapProxy(
             backend=backend,

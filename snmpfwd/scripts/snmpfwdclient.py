@@ -24,7 +24,7 @@ from pysnmp.proto import rfc1157, rfc1902, rfc1905, rfc3411
 from pysnmp.proto.api import v2c
 from snmpfwd import macro
 from snmpfwd.error import SnmpfwdError
-from snmpfwd import log, endpoint, bootstrap, target_override
+from snmpfwd import log, endpoint, bootstrap, target_override, metrics
 from snmpfwd.plugins import status
 from snmpfwd.trunking.manager import TrunkingManager
 from snmpfwd.lazylog import LazyLogString
@@ -123,6 +123,7 @@ def main():
         if errorIndication:
             log.info('received SNMP error-indication "%s"' % errorIndication, ctx=logCtx)
             trunkRsp['error-indication'] = errorIndication
+            metrics.increment(metrics.CLIENT_SNMP_ERRORS)
 
         if rspPDU:
             reqPdu = trunkReq['server-snmp-pdu']
@@ -223,6 +224,7 @@ def main():
         peerIdList = routingMap.get((origPeerId, srvClassId, macro.expandMacro(trunkId, trunkReq)))
         if not peerIdList:
             log.error('unroutable trunk message #%s' % msgId, ctx=logCtx)
+            metrics.increment(metrics.CLIENT_TRUNK_UNROUTABLE)
             errorIndication = 'no route to SNMP peer configured'
 
         cbCtx = trunkId, msgId, trunkReq, (), {}
@@ -740,6 +742,7 @@ def main():
 
     bootstrap.configure_trunks(cfgTree, trunkingManager)
     bootstrap.register_trunk_timers(transportDispatcher, trunkingManager)
+    bootstrap.register_metrics_timer(transportDispatcher)
     bootstrap.install_reload_handler(transportDispatcher, reload_callback)
     bootstrap.run_dispatcher_loop(args, transportDispatcher)
 
