@@ -27,15 +27,23 @@ jobs:
       - name: Install net-snmp CLI tools, snmpd, snmptrapd
         # Debian's snmpd package ships both snmpd and snmptrapd. snmp
         # provides snmpget / snmpwalk / snmpbulkget / snmptrap etc.
+        # Ensure /usr/sbin is on PATH for subsequent steps — some
+        # GitHub Actions images omit it for the runner user.
         run: |
           sudo apt-get update -y
           sudo apt-get install -y --no-install-recommends snmp snmpd
+          echo /usr/sbin >> "$GITHUB_PATH"
+          which snmpd snmptrapd || true
 
       - name: Install snmpfwd and test dependencies
+        # Use `snmpsim` (canonical lextudio package, requires pysnmp 7.1+).
+        # Do NOT use `snmpsim-lextudio`: that dist pins pysnmp-lextudio<7
+        # which installs into the same `pysnmp/` namespace and overwrites
+        # our pysnmp 7.x with the 6.x camelCase API.
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e .
-          python -m pip install pytest snmpsim-lextudio
+          python -m pip install pytest snmpsim
 
       - name: Run test suite
         run: |
