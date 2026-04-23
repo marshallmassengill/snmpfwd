@@ -19,10 +19,10 @@ Basic configuration strategy for the client part is:
 
 * Describe original SNMP credentials and peers used by the server part
   of the SNMP Forwarder to communicate with its SNMP Managers. Each peer
-  (or a group of them) is identified by `orig-snmp-peer-id-client-option`_.
+  (or a group of them) is identified by `server-snmp-entity-id-client-option`_.
 
 * Configure message routing in form of `matching-trunk-id-list-client-option`_ and
-  `matching-orig-snmp-peer-id-list-client-option`_ options mapped to the
+  `matching-server-snmp-entity-id-list-client-option`_ options mapped to the
   contents of `using-snmp-peer-id-list-client-option`_ option. The latter lists
   `snmp-peer-id-client-option`_'s to forward SNMP messages to.
 
@@ -607,32 +607,32 @@ Server part communicates to client all the aspects of the original SNMP query
 that server received. Options that follow leverage that information for the
 purpose of choosing SNMP manager to forward incoming SNMP packet to.
 
-.. _orig-snmp-engine-id-pattern-client-option:
+.. _server-snmp-engine-id-pattern-client-option:
 
-*orig-snmp-engine-id-pattern*
+*server-snmp-engine-id-pattern*
 +++++++++++++++++++++++++++++
 
 A regular expression matching SNMPv3 messages by their original SNMP engine ID.
 
-.. _orig-snmp-transport-domain-pattern-client-option:
+.. _server-snmp-transport-domain-pattern-client-option:
 
-*orig-snmp-transport-domain-pattern*
+*server-snmp-transport-domain-pattern*
 ++++++++++++++++++++++++++++++++++++
 
 A regular expression matching SNMP messages by the SNMP transport domain through which
 they are received.
 
-.. _orig-snmp-peer-address-pattern-client-option:
+.. _server-snmp-peer-address-pattern-client-option:
 
-*orig-snmp-peer-address-pattern*
+*server-snmp-peer-address-pattern*
 ++++++++++++++++++++++++++++++++
 
 A regular expression matching SNMP messages by their original source network
 address.
 
-.. _orig-snmp-bind-address-pattern-client-option:
+.. _server-snmp-bind-address-pattern-client-option:
 
-*orig-snmp-bind-address-pattern*
+*server-snmp-bind-address-pattern*
 ++++++++++++++++++++++++++++++++
 
 A regular expression matching SNMP messages by their original destination network
@@ -645,57 +645,57 @@ address.
     *snmp-transport-options* = *virtual-interface* in
     :doc:`server configuration <server-configuration>`
 
-.. _orig-snmp-security-model-pattern-client-option:
+.. _server-snmp-security-model-pattern-client-option:
 
-*orig-snmp-security-model-pattern*
+*server-snmp-security-model-pattern*
 ++++++++++++++++++++++++++++++++++
 
 A regular expression matching SNMP messages by their original security
 model.
 
-.. _orig-snmp-security-name-pattern-client-option:
+.. _server-snmp-security-name-pattern-client-option:
 
-*orig-snmp-security-name-pattern*
+*server-snmp-security-name-pattern*
 +++++++++++++++++++++++++++++++++
 
 A regular expression matching SNMP messages by their original security
 name.
 
-.. _orig-snmp-security-level-pattern-client-option:
+.. _server-snmp-security-level-pattern-client-option:
 
-*orig-snmp-security-level-pattern*
+*server-snmp-security-level-pattern*
 ++++++++++++++++++++++++++++++++++
 
 A regular expression matching SNMPv3 messages by their original security
 level value.
 
-.. _orig-snmp-context-engine-id-pattern-client-option:
+.. _server-snmp-context-engine-id-pattern-client-option:
 
-*orig-snmp-context-engine-id-pattern*
+*server-snmp-context-engine-id-pattern*
 +++++++++++++++++++++++++++++++++++++
 
 A regular expression matching SNMPv3 messages by their original context
 engine ID.
 
-.. _orig-snmp-context-name-pattern-client-option:
+.. _server-snmp-context-name-pattern-client-option:
 
-*orig-snmp-context-name-pattern*
+*server-snmp-context-name-pattern*
 ++++++++++++++++++++++++++++++++
 
 A regular expression matching SNMPv3 messages by their original context
 name.
 
-.. _orig-snmp-pdu-type-pattern-client-option:
+.. _server-snmp-pdu-type-pattern-client-option:
 
-*orig-snmp-pdu-type-pattern*
+*server-snmp-pdu-type-pattern*
 ++++++++++++++++++++++++++++
 
 A regular expression matching SNMP messages by their PDU type. Recognized values are: *GET*,
 *SET*, *GETNEXT*, *GETBULK*, *TRAPv1*, *TRAPv2* (the latter is also applicable for SNMPv3).
 
-.. _orig-snmp-oid-prefix-pattern-client-option:
+.. _server-snmp-oid-prefix-pattern-client-option:
 
-*orig-snmp-oid-prefix-pattern*
+*server-snmp-oid-prefix-pattern*
 ++++++++++++++++++++++++++++++
 
 A regular expression matching OIDs in SNMP PDU.
@@ -704,15 +704,15 @@ Example:
 
 .. code-block:: bash
 
-    orig-snmp-oid-prefix-pattern: 1\.3\.6\.1\.2\.1\.2\.1\.0|1\.3\.6\.1\.2\.1\.2\.2\.0
+    server-snmp-oid-prefix-pattern: 1\.3\.6\.1\.2\.1\.2\.1\.0|1\.3\.6\.1\.2\.1\.2\.2\.0
 
-.. _orig-snmp-peer-id-client-option:
+.. _server-snmp-entity-id-client-option:
 
-*orig-snmp-peer-id*
+*server-snmp-entity-id*
 +++++++++++++++++++
 
-Unique identifier grouping a collection of *orig-\** identifiers under a single ID.
-The *orig-snmp-peer-id* identifier is typically used in message routing tables.
+Unique identifier grouping a collection of *server-\** identifiers under a single ID.
+The *server-snmp-entity-id* identifier is typically used in message routing tables.
 
 This option can contain :ref:`SNMP macros <snmp-macros>`.
 
@@ -721,13 +721,13 @@ Example:
 .. code-block:: bash
 
     snmp-peer-A {
-      orig-snmp-transport-domain-pattern: 1\.3\.6\.1\.6\.1\.1\.100
-      orig-snmp-peer-address-pattern: 127\.0\.0\.1:[0-9]*
+      server-snmp-transport-domain-pattern: 1\.3\.6\.1\.6\.1\.1\.100
+      server-snmp-peer-address-pattern: 127\.0\.0\.1:[0-9]*
 
-      orig-snmp-security-name-pattern: public
-      orig-snmp-security-model-pattern: 1
+      server-snmp-security-name-pattern: public
+      server-snmp-security-model-pattern: 1
 
-      orig-snmp-peer-id: snmpv1-manager-at-localhost
+      server-snmp-entity-id: snmpv1-manager-at-localhost
     }
 
 .. _matching-server-classification-client-chapter:
@@ -813,13 +813,13 @@ This is done by searching for a combination of matching IDs.
 Evaluates to True if SNMP request message comes from one of `trunk-id`_'s present
 in the list.
 
-.. _matching-orig-snmp-peer-id-list-client-option:
+.. _matching-server-snmp-entity-id-list-client-option:
 
-*matching-orig-snmp-peer-id-list*
+*matching-server-snmp-entity-id-list*
 +++++++++++++++++++++++++++++++++
 
 Evaluates to True if original SNMP request message properties match
-any of `orig-snmp-peer-id-client-option`_'s in the list.
+any of `server-snmp-entity-id-client-option`_'s in the list.
 
 .. _matching-server-classification-id-list-client-option:
 
@@ -847,7 +847,7 @@ propagation in which case SNMP message will be dropped.
 
 Unique identifier matching a group of *matching-\** identifiers. Specifically,
 these are: `matching-trunk-id-list-client-option`_,
-`matching-orig-snmp-peer-id-list-client-option`_ and
+`matching-server-snmp-entity-id-list-client-option`_ and
 `matching-server-classification-id-list-client-option`_.
 
 SNMP request message will be sent to each `snmp-peer-id-client-option`_ present
@@ -860,7 +860,7 @@ Example:
     routing-map {
       route-1 {
         matching-trunk-id-list: frontend-server-trunk
-        matching-orig-snmp-peer-id-list: manager-123
+        matching-server-snmp-entity-id-list: manager-123
         matching-server-classification-id-list: any-classification
 
         using-plugin-id-list: oidfilter

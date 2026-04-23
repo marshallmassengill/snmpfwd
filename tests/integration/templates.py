@@ -138,24 +138,24 @@ trunking-group {{
   trunk-id: <discover>
 }}
 
-original-snmp-peer-info-group {{
-  orig-snmp-bind-address-pattern: .*?
-  orig-snmp-context-name-pattern: .*?
+server-snmp-entity-info-group {{
+  server-snmp-bind-address-pattern: .*?
+  server-snmp-context-name-pattern: .*?
 
-  orig-snmp-pdu-type-pattern: .*?
-  orig-snmp-oid-prefix-pattern: .*?
+  server-snmp-pdu-type-pattern: .*?
+  server-snmp-oid-prefix-pattern: .*?
 
-  orig-snmp-engine-id-pattern: .*?
-  orig-snmp-context-engine-id-pattern: .*?
+  server-snmp-engine-id-pattern: .*?
+  server-snmp-context-engine-id-pattern: .*?
 
-  orig-snmp-transport-domain-pattern: .*?
-  orig-snmp-peer-address-pattern: .*?
+  server-snmp-transport-domain-pattern: .*?
+  server-snmp-peer-address-pattern: .*?
 
-  orig-snmp-security-level-pattern: .*?
-  orig-snmp-security-name-pattern: .*?
-  orig-snmp-security-model-pattern: .*?
+  server-snmp-security-level-pattern: .*?
+  server-snmp-security-name-pattern: .*?
+  server-snmp-security-model-pattern: .*?
 
-  orig-snmp-peer-id: any-manager
+  server-snmp-entity-id: any-manager
 }}
 
 server-classification-group {{
@@ -169,7 +169,7 @@ server-classification-group {{
 
 routing-map {{
   matching-trunk-id-list: trunk-1
-  matching-orig-snmp-peer-id-list: any-manager
+  matching-server-snmp-entity-id-list: any-manager
   matching-server-classification-id-list: pass-through
 {plugin_route_line}
   using-snmp-peer-id-list: backend-1
@@ -296,24 +296,24 @@ trunking-group {{
   trunk-id: <discover>
 }}
 
-original-snmp-peer-info-group {{
-  orig-snmp-bind-address-pattern: .*?
-  orig-snmp-context-name-pattern: .*?
+server-snmp-entity-info-group {{
+  server-snmp-bind-address-pattern: .*?
+  server-snmp-context-name-pattern: .*?
 
-  orig-snmp-pdu-type-pattern: (TRAPv1|TRAPv2|INFORM)
-  orig-snmp-oid-prefix-pattern: .*?
+  server-snmp-pdu-type-pattern: (TRAPv1|TRAPv2|INFORM)
+  server-snmp-oid-prefix-pattern: .*?
 
-  orig-snmp-engine-id-pattern: .*?
-  orig-snmp-context-engine-id-pattern: .*?
+  server-snmp-engine-id-pattern: .*?
+  server-snmp-context-engine-id-pattern: .*?
 
-  orig-snmp-transport-domain-pattern: .*?
-  orig-snmp-peer-address-pattern: .*?
+  server-snmp-transport-domain-pattern: .*?
+  server-snmp-peer-address-pattern: .*?
 
-  orig-snmp-security-level-pattern: .*?
-  orig-snmp-security-name-pattern: .*?
-  orig-snmp-security-model-pattern: .*?
+  server-snmp-security-level-pattern: .*?
+  server-snmp-security-name-pattern: .*?
+  server-snmp-security-model-pattern: .*?
 
-  orig-snmp-peer-id: any-agent
+  server-snmp-entity-id: any-agent
 }}
 
 server-classification-group {{
@@ -327,7 +327,7 @@ server-classification-group {{
 
 routing-map {{
   matching-trunk-id-list: trunk-1
-  matching-orig-snmp-peer-id-list: any-agent
+  matching-server-snmp-entity-id-list: any-agent
   matching-server-classification-id-list: pass-through
 
   using-snmp-peer-id-list: backend-1

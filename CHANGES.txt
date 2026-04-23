@@ -39,6 +39,20 @@ Features:
   the process via `loop.add_signal_handler` instead of the legacy
   raise-during-syscall `signal.signal` pattern, so shutdown plays
   cleanly with asyncio.
+- systemd unit files shipped under `conf/systemd/` for snmpfwd-server
+  and snmpfwd-client. DynamicUser=yes, journal-captured stderr,
+  CAP_NET_BIND_SERVICE for 161/udp, `systemctl reload` wired to
+  SIGHUP for on-the-fly routing reload.
+
+Breaking config changes (client side):
+- Client-config option prefix `orig-*` renamed to `server-*` for
+  consistency with the internal trunk-request keys and with the
+  existing `server-classification-*` group. Specifically:
+  `orig-snmp-<x>-pattern` -> `server-snmp-<x>-pattern` (11 pattern
+  attributes), `orig-snmp-peer-id` -> `server-snmp-entity-id`,
+  `matching-orig-snmp-peer-id-list` ->
+  `matching-server-snmp-entity-id-list`. No backward-compat alias;
+  client configs carried forward from 0.4.x must be renamed.
 
 Internals:
 - CLI migrated from getopt to argparse. All legacy flag names and

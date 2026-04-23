@@ -616,31 +616,29 @@ def main():
 
     duplicates = {}
 
-    # TODO: rename orig-* into server-* and orig-snmp-peer-id into server-snmp-entity-id
-
-    for origCredCfgPath in cfgTree.getPathsToAttr('orig-snmp-peer-id'):
-        origCredId = cfgTree.getAttrValue('orig-snmp-peer-id', *origCredCfgPath)
+    for origCredCfgPath in cfgTree.getPathsToAttr('server-snmp-entity-id'):
+        origCredId = cfgTree.getAttrValue('server-snmp-entity-id', *origCredCfgPath)
         if origCredId in duplicates:
-            log.error('duplicate orig-snmp-peer-id=%s at %s and %s' % (origCredId, '.'.join(origCredCfgPath), '.'.join(duplicates[origCredId])))
+            log.error('duplicate server-snmp-entity-id=%s at %s and %s' % (origCredId, '.'.join(origCredCfgPath), '.'.join(duplicates[origCredId])))
             return
 
         duplicates[origCredId] = origCredCfgPath
 
         k = '#'.join(
-            (cfgTree.getAttrValue('orig-snmp-engine-id-pattern', *origCredCfgPath),
-             cfgTree.getAttrValue('orig-snmp-transport-domain-pattern', *origCredCfgPath),
-             cfgTree.getAttrValue('orig-snmp-peer-address-pattern', *origCredCfgPath),
-             cfgTree.getAttrValue('orig-snmp-bind-address-pattern', *origCredCfgPath),
-             cfgTree.getAttrValue('orig-snmp-security-model-pattern', *origCredCfgPath),
-             cfgTree.getAttrValue('orig-snmp-security-level-pattern', *origCredCfgPath),
-             cfgTree.getAttrValue('orig-snmp-security-name-pattern', *origCredCfgPath),
-             cfgTree.getAttrValue('orig-snmp-context-engine-id-pattern', *origCredCfgPath),
-             cfgTree.getAttrValue('orig-snmp-context-name-pattern', *origCredCfgPath),
-             cfgTree.getAttrValue('orig-snmp-pdu-type-pattern', *origCredCfgPath),
-             cfgTree.getAttrValue('orig-snmp-oid-prefix-pattern', *origCredCfgPath))
+            (cfgTree.getAttrValue('server-snmp-engine-id-pattern', *origCredCfgPath),
+             cfgTree.getAttrValue('server-snmp-transport-domain-pattern', *origCredCfgPath),
+             cfgTree.getAttrValue('server-snmp-peer-address-pattern', *origCredCfgPath),
+             cfgTree.getAttrValue('server-snmp-bind-address-pattern', *origCredCfgPath),
+             cfgTree.getAttrValue('server-snmp-security-model-pattern', *origCredCfgPath),
+             cfgTree.getAttrValue('server-snmp-security-level-pattern', *origCredCfgPath),
+             cfgTree.getAttrValue('server-snmp-security-name-pattern', *origCredCfgPath),
+             cfgTree.getAttrValue('server-snmp-context-engine-id-pattern', *origCredCfgPath),
+             cfgTree.getAttrValue('server-snmp-context-name-pattern', *origCredCfgPath),
+             cfgTree.getAttrValue('server-snmp-pdu-type-pattern', *origCredCfgPath),
+             cfgTree.getAttrValue('server-snmp-oid-prefix-pattern', *origCredCfgPath))
         )
 
-        log.info('configuring original SNMP peer ID %s (at %s), composite key: %s' % (origCredId, '.'.join(origCredCfgPath), k))
+        log.info('configuring server SNMP entity ID %s (at %s), composite key: %s' % (origCredId, '.'.join(origCredCfgPath), k))
 
         origCredIdList.append((origCredId, re.compile(k)))
 
@@ -679,7 +677,7 @@ def main():
         for pluginCfgPath in cfgTree.getPathsToAttr('using-plugin-id-list'):
             pluginIdList = cfgTree.getAttrValue('using-plugin-id-list', *pluginCfgPath, vector=True)
             log.info('configuring plugin ID(s) %s (at %s)...' % (','.join(pluginIdList), '.'.join(pluginCfgPath)))
-            for credId in cfgTree.getAttrValue('matching-orig-snmp-peer-id-list', *pluginCfgPath, vector=True):
+            for credId in cfgTree.getAttrValue('matching-server-snmp-entity-id-list', *pluginCfgPath, vector=True):
                 for srvClassId in cfgTree.getAttrValue('matching-server-classification-id-list', *pluginCfgPath, vector=True):
                     for trunkId in cfgTree.getAttrValue('matching-trunk-id-list', *pluginCfgPath, vector=True):
                         k = credId, srvClassId, trunkId
@@ -702,7 +700,7 @@ def main():
         for routeCfgPath in cfgTree.getPathsToAttr('using-snmp-peer-id-list'):
             peerIdList = cfgTree.getAttrValue('using-snmp-peer-id-list', *routeCfgPath, vector=True)
             log.info('configuring routing entry with peer IDs %s (at %s)...' % (','.join(peerIdList), '.'.join(routeCfgPath)))
-            for credId in cfgTree.getAttrValue('matching-orig-snmp-peer-id-list', *routeCfgPath, vector=True):
+            for credId in cfgTree.getAttrValue('matching-server-snmp-entity-id-list', *routeCfgPath, vector=True):
                 for srvClassId in cfgTree.getAttrValue('matching-server-classification-id-list', *routeCfgPath, vector=True):
                     for trunkId in cfgTree.getAttrValue('matching-trunk-id-list', *routeCfgPath, vector=True):
                         k = credId, srvClassId, trunkId

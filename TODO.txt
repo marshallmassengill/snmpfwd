@@ -15,8 +15,6 @@
   mode (needs Linux iptables TPROXY + root in the test environment; the
   lcd monkey patch is unit-tested via test_target_override.py but not
   exercised end-to-end)
-* remove old pysnmp monkey patch
-* rename orig- into server- at the client config for consistency
 * allow for multiple --logging-method parameters
 * further optimize GETBULK PDU handling at the oidfilter plugin
   - when linearlized var-binds might produce less than max-repeaters,
