@@ -2,6 +2,7 @@
 SNMP Proxy Forwarder
 --------------------
 
+[![Tests](https://github.com/marshallmassengill/snmpfwd/actions/workflows/test.yml/badge.svg?branch=rebuild)](https://github.com/marshallmassengill/snmpfwd/actions/workflows/test.yml)
 [![Python Versions](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-BSD--2--Clause-blue.svg)](./LICENSE.txt)
 
