@@ -1,8 +1,8 @@
 
-* migrate to argparse
 * more defaulted configuration options
-* implement INFORM forwarding support (may require pysnmp's NotificationReceiver rework)
 * add more configuration examples
+* ship systemd unit files for snmpfwd-server and snmpfwd-client (with
+  example install instructions)
 * add some drawings explaining network topology in different configurations
 * unify network endpoint string parser defaulting port part
 * implement PDU split at content map
@@ -10,10 +10,15 @@
 * improve logging plugin to expand snmp-* options in log file path
 * migrate the logging plugin to use its own logger infrastructure
 * cross-link options in configuration docs
-* count runtime errors, report them periodically or serve as SNMP table
+* expose runtime counters as an SNMP table (periodic log dump is shipped)
+* extend SIGHUP reload to cover trunks, credentials, and plugin modules
+  (currently only routing maps and classifier lists reload on SIGHUP)
+* end-to-end integration test for transparent-proxy / virtual-interface
+  mode (needs Linux iptables TPROXY + root in the test environment; the
+  lcd monkey patch is unit-tested via test_target_override.py but not
+  exercised end-to-end)
 * remove old pysnmp monkey patch
 * rename orig- into server- at the client config for consistency
-* auto-reload changed configuration (core and plugins)
 * allow for multiple --logging-method parameters
 * further optimize GETBULK PDU handling at the oidfilter plugin
   - when linearlized var-binds might produce less than max-repeaters,
