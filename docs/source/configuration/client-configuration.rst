@@ -138,7 +138,7 @@ Enable specific networking options. Valid values:
 
 .. note::
 
-    Both options only work on Linux and require Python 3.3+.
+    Both options only work on Linux.
 
 .. _snmp-bind-address-client-option:
 

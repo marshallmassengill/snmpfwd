@@ -14,18 +14,12 @@ Client and server daemons share the same set of command-line options:
 
 .. code-block:: bash
 
-    $ snmpfwd-server.py --help
-    Usage: snmpfwd-server.py
-        [--help]
-        [--version]
-        [--debug-snmp=<options>]
-        [--debug-asn1=<options>]
-        [--daemonize]
-        [--process-user=<uname>] [--process-group=<gname>]
-        [--pid-file=<file>]
-        [--logging-method=<options>]
-        [--log-level=<options>]
-        [--config-file=<file>]
+    $ snmpfwd-server --help
+    usage: snmpfwd-server [-h] [-v] [--debug-snmp FLAGS] [--debug-asn1 FLAGS]
+                          [--daemonize] [--process-user UNAME]
+                          [--process-group GNAME] [--pid-file FILE]
+                          [--logging-method METHOD[:args]]
+                          [--log-level {debug,info,error}] [--config-file FILE]
 
 
 .. _debug_snmp_cli_option:

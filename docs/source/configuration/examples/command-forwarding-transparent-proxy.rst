@@ -21,7 +21,7 @@ The workflow scenario could be like this:
   SNMP manager address to the SNMP Proxy Forwarder host where its
   client part is running
 
-This only works on Linux, requires Python 3.3+ and superuser privileges.
+This only works on Linux and requires superuser privileges.
 
 Network configuration
 ---------------------

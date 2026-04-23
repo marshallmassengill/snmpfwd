@@ -9,7 +9,7 @@ you could set up many virtual (AKA secondary) network interfaces at the
 server host and configure SNMP Proxy Forwarder to route SNMP messages
 based on their destination addresses.
 
-This only works on Linux and requires Python 3.3+.
+This only works on Linux.
 
 .. toctree::
    :maxdepth: 2
