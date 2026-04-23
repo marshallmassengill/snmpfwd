@@ -106,6 +106,85 @@ from snmpfwd.plugins import status
     assert ctx == {'visited': True}
 
 
+def test_reload_from_config_picks_up_new_plugin(tmp_path):
+    plugins_dir = _write_plugin(tmp_path, 'p1', """
+hostProgs = ('snmpfwd-server',)
+apiVersions = (2,)
+flavour = 'v1'
+""")
+    mgr = PluginManager([str(plugins_dir)], progId='snmpfwd-server', apiVer=2)
+    mgr.reload_from_config([('first', 'p1', [])])
+    assert mgr.hasPlugin('first')
+    assert mgr._PluginManager__plugins['first']['flavour'] == 'v1'
+
+    # Bump the source file. Reload should pick the new value up.
+    (plugins_dir / 'p1.py').write_text("""
+hostProgs = ('snmpfwd-server',)
+apiVersions = (2,)
+flavour = 'v2'
+""")
+    mgr.reload_from_config([('first', 'p1', [])])
+    assert mgr._PluginManager__plugins['first']['flavour'] == 'v2'
+
+
+def test_reload_replaces_plugin_set_atomically(tmp_path):
+    """Removing a plugin from the reload spec drops it from the
+    registry; adding a new one lands it."""
+    plugins_dir = _write_plugin(tmp_path, 'a', """
+hostProgs = ('snmpfwd-server',)
+apiVersions = (2,)
+""")
+    _write_plugin(tmp_path, 'b', """
+hostProgs = ('snmpfwd-server',)
+apiVersions = (2,)
+""")
+    mgr = PluginManager([str(plugins_dir)], progId='snmpfwd-server', apiVer=2)
+    mgr.reload_from_config([('x', 'a', []), ('y', 'b', [])])
+    assert mgr.hasPlugin('x') and mgr.hasPlugin('y')
+
+    mgr.reload_from_config([('y', 'b', []), ('z', 'a', [])])
+    assert not mgr.hasPlugin('x')
+    assert mgr.hasPlugin('y')
+    assert mgr.hasPlugin('z')
+
+
+def test_reload_failure_preserves_previous_plugin_set(tmp_path):
+    """A broken reload spec must not leave the manager in a
+    half-configured state."""
+    plugins_dir = _write_plugin(tmp_path, 'good', """
+hostProgs = ('snmpfwd-server',)
+apiVersions = (2,)
+marker = 'original'
+""")
+    mgr = PluginManager([str(plugins_dir)], progId='snmpfwd-server', apiVer=2)
+    mgr.loadPlugin('p-id', 'good', [])
+
+    # Reload points at a non-existent module — everything should fail,
+    # raise, and the original 'p-id' plugin should stay put with its
+    # original marker value.
+    with pytest.raises(SnmpfwdError):
+        mgr.reload_from_config([('p-id', 'does-not-exist', [])])
+
+    assert mgr.hasPlugin('p-id')
+    assert mgr._PluginManager__plugins['p-id']['marker'] == 'original'
+
+
+def test_reload_propagates_new_options(tmp_path):
+    """The `moduleOptions` list the plugin sees at exec time reflects
+    the values passed to reload_from_config, not the ones from an
+    earlier loadPlugin."""
+    plugins_dir = _write_plugin(tmp_path, 'opts_observer', """
+hostProgs = ('snmpfwd-server',)
+apiVersions = (2,)
+observed_options = list(moduleOptions)
+""")
+    mgr = PluginManager([str(plugins_dir)], progId='snmpfwd-server', apiVer=2)
+    mgr.loadPlugin('p', 'opts_observer', ['before=true'])
+    assert mgr._PluginManager__plugins['p']['observed_options'] == ['before=true']
+    mgr.reload_from_config([('p', 'opts_observer', ['after=true'])])
+    assert mgr._PluginManager__plugins['p']['observed_options'] == ['after=true']
+
+
 def test_unknown_plugin_id_is_logged_and_returns_next(tmp_path):
     plugins_dir = tmp_path / 'plugins'
     plugins_dir.mkdir()

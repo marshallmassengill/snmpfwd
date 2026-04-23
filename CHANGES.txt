@@ -22,10 +22,15 @@ Platform / dependencies:
   3.11 / 3.12 / 3.13.
 
 Features:
-- SIGHUP-triggered config reload of routing maps and classifier
-  lists (bootstrap.install_reload_handler). Trunks, credentials, and
-  plugin modules still require a restart. Failed reloads keep the
-  previous routing untouched.
+- SIGHUP-triggered config reload of routing maps, classifier lists,
+  AND plugin modules (bootstrap.install_reload_handler +
+  bootstrap.reload_plugin_manager). Each plugin-id block is re-exec'd
+  from disk with the current plugin-options; plugin-id additions and
+  removals in the reloaded config are honoured. Reload is
+  all-or-nothing per phase: a failed plugin reload keeps the old
+  plugin set in place, and a failed routing reload keeps the old
+  routing. Trunks, credentials, and the plugin-modules search path
+  still require a restart.
 - INFORM forwarding with end-to-end confirmation. The proxy ack's
   the original INFORM sender only after the downstream has ack'd the
   proxy; on downstream failure the ack is skipped so the sender can

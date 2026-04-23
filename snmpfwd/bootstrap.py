@@ -158,6 +158,33 @@ def build_plugin_manager(
     return pluginManager
 
 
+def reload_plugin_manager(
+    cfgTree: cparser.Config,
+    args: "argparse.Namespace",
+    pluginManager: PluginManager,
+) -> None:
+    """Re-exec every plugin-id block in `cfgTree` into `pluginManager`,
+    atomically replacing the plugin set. Raises SnmpfwdError — with
+    the existing plugin set untouched — on any failure.
+
+    Intended as a step inside the SIGHUP reload callback so the
+    running proxy picks up plugin-source changes and updated
+    plugin-options without a restart."""
+    specs = []
+    for pluginCfgPath in cfgTree.getPathsToAttr('plugin-id'):
+        pluginId = cfgTree.getAttrValue('plugin-id', *pluginCfgPath)
+        pluginMod = cfgTree.getAttrValue('plugin-module', *pluginCfgPath)
+        pluginOptions = macro.expandMacros(
+            cfgTree.getAttrValue('plugin-options', *pluginCfgPath,
+                                 default=[], vector=True),
+            {'config-dir': os.path.dirname(args.config_file)},
+        )
+        specs.append((pluginId, pluginMod, pluginOptions))
+
+    with daemon.PrivilegesOf(args.process_user, args.process_group):
+        pluginManager.reload_from_config(specs)
+
+
 def build_transport_dispatcher() -> AsyncioDispatcher:
     """Construct an AsyncioDispatcher and wire its routing callback. The
     routing callback returns the transport-domain as the recv-callable

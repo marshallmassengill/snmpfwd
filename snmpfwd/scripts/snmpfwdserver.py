@@ -939,8 +939,12 @@ def main():
     def reload_callback():
         log.info('SIGHUP received; re-parsing %s' % args.config_file)
         new_cfg = bootstrap.load_config(args, PROGRAM_NAME, CONFIG_VERSION)
+        # Plugins first: populate_routing validates routing against the
+        # plugin set, so ordering lets a newly-added plugin be
+        # referenced by new routing in the same reload.
+        bootstrap.reload_plugin_manager(new_cfg, args, pluginManager)
         populate_routing(new_cfg)
-        log.info('configuration routing reloaded from %s' % args.config_file)
+        log.info('configuration plugins + routing reloaded from %s' % args.config_file)
 
     def dataCbFun(trunkId, msgId, msg):
         log.debug('message ID %s received from trunk %s' % (msgId, trunkId))

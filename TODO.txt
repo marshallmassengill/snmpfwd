@@ -1,8 +1,10 @@
 
 * add more configuration examples
 * cross-link options in configuration docs
-* extend SIGHUP reload to cover trunks, credentials, and plugin modules
-  (currently only routing maps and classifier lists reload on SIGHUP)
+* extend SIGHUP reload to cover trunks and credentials (plugin modules,
+  routing maps, and classifier lists reload on SIGHUP today; trunk
+  connection churn and pysnmp credential add/remove still require a
+  restart)
 * end-to-end integration test for transparent-proxy / virtual-interface
   mode (needs Linux iptables TPROXY + root in the test environment; the
   lcd monkey patch is unit-tested via test_target_override.py but not

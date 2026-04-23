@@ -733,8 +733,9 @@ def main():
     def reload_callback():
         log.info('SIGHUP received; re-parsing %s' % args.config_file)
         new_cfg = bootstrap.load_config(args, PROGRAM_NAME, CONFIG_VERSION)
+        bootstrap.reload_plugin_manager(new_cfg, args, pluginManager)
         populate_routing(new_cfg)
-        log.info('configuration routing reloaded from %s' % args.config_file)
+        log.info('configuration plugins + routing reloaded from %s' % args.config_file)
 
     trunkingManager = TrunkingManager(trunkCbFun, transportDispatcher.loop)
 

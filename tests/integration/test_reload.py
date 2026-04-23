@@ -52,7 +52,7 @@ def test_sighup_reloads_server_routing(snmpfwd_proxy):
 
     assert _wait_for_log(
         snmpfwd_proxy.server_log,
-        'configuration routing reloaded',
+        'configuration plugins + routing reloaded',
     ), "server log never reported a successful reload\n--- log tail ---\n" + \
         snmpfwd_proxy.server_log.read_text()[-2000:]
 
@@ -96,6 +96,101 @@ def test_sighup_invalid_config_keeps_old_routing(snmpfwd_proxy):
     vbs = snmp_get(
         target=snmpfwd_proxy.listen_address,
         community=snmpfwd_proxy.listen_community,
+        oids=[SYS_DESCR],
+    )
+    assert len(vbs) == 1
+
+
+def test_sighup_reloads_plugin_options(snmpfwd_proxy_logger_templated):
+    """Flip the logger plugin's destination template in the server
+    config, SIGHUP, drive a GET — the new file path (not the old one)
+    should receive the log line."""
+    proxy = snmpfwd_proxy_logger_templated
+
+    # Baseline: one GET under the original template writes
+    # 127.0.0.1.log into proxy.plugin_log_dir.
+    snmp_get(
+        target=proxy.listen_address,
+        community=proxy.listen_community,
+        oids=[SYS_DESCR],
+    )
+    original_file = proxy.plugin_log_dir / '127.0.0.1.log'
+    assert original_file.exists(), (
+        f'baseline log file missing before reload: '
+        f'{sorted(proxy.plugin_log_dir.iterdir())}'
+    )
+
+    # Rewrite the server config: flip the plugin-options so the logger
+    # plugin uses a differently-named config (swapped destination
+    # template). Trick: easier than editing plugin-options is to edit
+    # the logger.ini that plugin-options points at.
+    logger_ini = proxy.server_config_path.parent / 'logger.ini'
+    original_ini = logger_ini.read_text()
+    modified_ini = original_ini.replace(
+        '${snmp-peer-address}.log',
+        'after-reload-${snmp-peer-address}.log',
+    )
+    assert modified_ini != original_ini, (
+        'test config template no longer contains the pre-reload destination'
+    )
+    logger_ini.write_text(modified_ini)
+
+    os.kill(proxy.server_pid, signal.SIGHUP)
+    assert _wait_for_log(
+        proxy.server_log,
+        'configuration plugins + routing reloaded',
+    ), 'server log never reported a successful plugin+routing reload\n' + \
+        proxy.server_log.read_text()[-2000:]
+
+    # Drive another GET; the plugin should now write under the NEW
+    # destination pattern, leaving the old file untouched.
+    snmp_get(
+        target=proxy.listen_address,
+        community=proxy.listen_community,
+        oids=[SYS_DESCR],
+    )
+    post_reload_file = proxy.plugin_log_dir / 'after-reload-127.0.0.1.log'
+    assert post_reload_file.exists(), (
+        f'plugin did not pick up reloaded destination; '
+        f'files: {sorted(proxy.plugin_log_dir.iterdir())}'
+    )
+
+
+def test_sighup_rejects_bad_plugin_options_and_keeps_old(
+    snmpfwd_proxy_logger_templated,
+):
+    """If the new config's plugin block references a module that
+    can't load (e.g. bad config filename), reload fails atomically —
+    the previously-running plugin keeps handling traffic."""
+    proxy = snmpfwd_proxy_logger_templated
+    # Baseline forwarding works.
+    snmp_get(
+        target=proxy.listen_address,
+        community=proxy.listen_community,
+        oids=[SYS_DESCR],
+    )
+
+    # Rewrite the server config to point the logger plugin at a
+    # non-existent ini file. Python logger plugin opens the config
+    # eagerly at init, so re-exec will raise.
+    new_conf = proxy.server_config_path.read_text().replace(
+        'plugin-options: config=',
+        'plugin-options: config=/tmp/does-not-exist-',
+    )
+    # Only change if the substitution actually applied.
+    assert new_conf != proxy.server_config_path.read_text()
+    proxy.server_config_path.write_text(new_conf)
+
+    os.kill(proxy.server_pid, signal.SIGHUP)
+    assert _wait_for_log(
+        proxy.server_log,
+        'plugin reload failed',
+    ), 'server log never reported the plugin reload failure'
+
+    # Forwarding still works under the pre-reload plugin state.
+    vbs = snmp_get(
+        target=proxy.listen_address,
+        community=proxy.listen_community,
         oids=[SYS_DESCR],
     )
     assert len(vbs) == 1
