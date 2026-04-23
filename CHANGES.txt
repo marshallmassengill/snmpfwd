@@ -1,4 +1,82 @@
 
+Revision 0.5.1, released 23-04-2026
+-----------------------------------
+
+Feature follow-on release on top of 0.5.0's rebuild. No wire-protocol
+or runtime-dependency change; config users should note the one
+client-side breaking rename.
+
+Features:
+- SIGHUP reload now also re-exec's plugin modules (in addition to the
+  routing maps and classifier lists that 0.5.0 already reloaded). Each
+  plugin-id block is re-exec'd from disk with the current
+  plugin-options; plugin-id additions and removals in the reloaded
+  config are honoured. Reload is all-or-nothing per phase — a failed
+  plugin reload keeps the old plugin set in place. Trunks, credentials,
+  and the plugin-modules search path still require a restart.
+- Runtime counters are now reachable via SNMP, not just the periodic
+  log dump. Set `SNMPFWD_METRICS_SNMP_BIND=<host>:<port>` on either
+  snmpfwd-server or snmpfwd-client and an in-process read-only v2c
+  agent serves the `snmpfwd.metrics` registry under the OID subtree
+  exported by `snmpfwd.metrics_mib` (default root
+  `1.3.6.1.4.1.55555.1.2`; a placeholder — override
+  `metrics_mib.METRICS_ROOT_OID` if you have a real IANA PEN).
+  Community is `public` by default, overridable with
+  `SNMPFWD_METRICS_SNMP_COMMUNITY`. GET/GETNEXT/GETBULK only — no
+  writes, and the agent has its own private transport-domain OID so
+  it doesn't interfere with configured forwarding transports.
+- `logger` plugin: the `[file] destination` option now accepts
+  `${...}` macros from the request's trunk-message context. The
+  first time a given resolved path is seen the plugin creates (and
+  caches) a TimedRotatingFileHandler for it, letting a single proxy
+  split logs per-peer / per-context / per-credential. Example:
+  `destination = /var/log/snmpfwd/${snmp-peer-address}.log`. Macros
+  that aren't in the context render as `_unknown` with a one-shot
+  warning. Filesystem-unsafe characters in macro values are
+  sanitised to `_`. Static paths with no macros behave unchanged.
+- `--logging-method` is now repeatable. Each occurrence attaches an
+  additional log sink, so records fan out to every configured method
+  in parallel. Example: `--logging-method=stderr
+  --logging-method=file:/var/log/snmpfwd/server.log:10m`. Omitting the
+  flag still defaults to a single stderr sink. `log.setLogger`'s
+  semantics change to match — `force=True` clears existing handlers,
+  `force=False` (the new default) appends.
+- systemd unit files shipped under `conf/systemd/` for snmpfwd-server
+  and snmpfwd-client. DynamicUser=yes, journal-captured stderr,
+  CAP_NET_BIND_SERVICE for 161/udp, `systemctl reload` wired to
+  SIGHUP for the on-the-fly reload.
+
+Cleanup:
+- `endpoint.parseTransportAddress` and
+  `trunking.endpoint.parseTrunkEndpoint` now share a single
+  `parse_optional_port` helper. Default-port handling and error
+  reporting are identical between the two parsers; both accept
+  "bracketed IPv6 host without a port" (e.g. `[::1]`,
+  `[fe80::1]`), which the trunk parser already tolerated and the
+  SNMP-endpoint parser previously rejected. Fixed a latent bug in
+  the trunk IPv6 regex that rejected any hex letter in the host
+  (`[fe80::1]:30301` now parses).
+
+Breaking config changes (client side):
+- Client-config option prefix `orig-*` renamed to `server-*` for
+  consistency with the internal trunk-request keys and with the
+  existing `server-classification-*` group. Specifically:
+  `orig-snmp-<x>-pattern` -> `server-snmp-<x>-pattern` (11 pattern
+  attributes), `orig-snmp-peer-id` -> `server-snmp-entity-id`,
+  `matching-orig-snmp-peer-id-list` ->
+  `matching-server-snmp-entity-id-list`. No backward-compat alias;
+  client configs carried forward from 0.4.x must be renamed.
+
+CI:
+- `.github/workflows/test.yml` now triggers on pushes to `rebuild`
+  (the new default branch), installs `snmpsim` (the canonical
+  package; `snmpsim-lextudio` drags in pysnmp-lextudio<7 which
+  clobbers our pysnmp 7 runtime), explicitly installs `snmptrapd`
+  (split out of `snmpd` on Ubuntu 24.04), and runs the full `tests/`
+  tree rather than only `tests/integration/`.
+- README shows a GitHub Actions "Tests" status badge.
+
+
 Revision 0.5.0, released 23-04-2026
 -----------------------------------
 
@@ -22,15 +100,10 @@ Platform / dependencies:
   3.11 / 3.12 / 3.13.
 
 Features:
-- SIGHUP-triggered config reload of routing maps, classifier lists,
-  AND plugin modules (bootstrap.install_reload_handler +
-  bootstrap.reload_plugin_manager). Each plugin-id block is re-exec'd
-  from disk with the current plugin-options; plugin-id additions and
-  removals in the reloaded config are honoured. Reload is
-  all-or-nothing per phase: a failed plugin reload keeps the old
-  plugin set in place, and a failed routing reload keeps the old
-  routing. Trunks, credentials, and the plugin-modules search path
-  still require a restart.
+- SIGHUP-triggered config reload of routing maps and classifier
+  lists (bootstrap.install_reload_handler). Trunks, credentials, and
+  plugin modules still require a restart. Failed reloads keep the
+  previous routing untouched.
 - INFORM forwarding with end-to-end confirmation. The proxy ack's
   the original INFORM sender only after the downstream has ack'd the
   proxy; on downstream failure the ack is skipped so the sender can
@@ -44,58 +117,6 @@ Features:
   the process via `loop.add_signal_handler` instead of the legacy
   raise-during-syscall `signal.signal` pattern, so shutdown plays
   cleanly with asyncio.
-- systemd unit files shipped under `conf/systemd/` for snmpfwd-server
-  and snmpfwd-client. DynamicUser=yes, journal-captured stderr,
-  CAP_NET_BIND_SERVICE for 161/udp, `systemctl reload` wired to
-  SIGHUP for on-the-fly routing reload.
-- `--logging-method` is now repeatable. Each occurrence attaches an
-  additional log sink, so records fan out to every configured method
-  in parallel. Example: `--logging-method=stderr
-  --logging-method=file:/var/log/snmpfwd/server.log:10m`. Omitting the
-  flag still defaults to a single stderr sink. `log.setLogger`'s
-  semantics change to match — `force=True` clears existing handlers,
-  `force=False` (the new default) appends.
-- Runtime counters are now reachable via SNMP, not just the periodic
-  log dump. Set `SNMPFWD_METRICS_SNMP_BIND=<host>:<port>` on either
-  snmpfwd-server or snmpfwd-client and an in-process read-only v2c
-  agent serves the `snmpfwd.metrics` registry under the OID subtree
-  exported by `snmpfwd.metrics_mib` (default root
-  `1.3.6.1.4.1.55555.1.2`; a placeholder — override
-  `metrics_mib.METRICS_ROOT_OID` if you have a real IANA PEN).
-  Community is `public` by default, overridable with
-  `SNMPFWD_METRICS_SNMP_COMMUNITY`. GET/GETNEXT/GETBULK only — no
-  writes, and the agent has its own private transport-domain OID so
-  it doesn't interfere with configured forwarding transports. When
-  the env var is unset (the default) nothing is started.
-- `logger` plugin: the `[file] destination` option now accepts
-  `${...}` macros from the request's trunk-message context. The
-  first time a given resolved path is seen the plugin creates (and
-  caches) a TimedRotatingFileHandler for it, letting a single proxy
-  split logs per-peer / per-context / per-credential. Example:
-  `destination = /var/log/snmpfwd/${snmp-peer-address}.log`. Macros
-  that aren't in the context render as `_unknown` with a one-shot
-  warning so misconfigurations surface without flooding the log.
-  Filesystem-unsafe characters (`/ \\ : NUL space`) in macro values
-  are sanitised to `_`. Static paths with no macros behave unchanged.
-- `endpoint.parseTransportAddress` and
-  `trunking.endpoint.parseTrunkEndpoint` now share a single
-  `parse_optional_port` helper. Default-port handling and error
-  reporting are identical between the two parsers; both accept
-  "bracketed IPv6 host without a port" (e.g. `[::1]`,
-  `[fe80::1]`), which the trunk parser already tolerated and the
-  SNMP-endpoint parser previously rejected. Fixed a latent bug in
-  the trunk IPv6 regex that rejected any hex letter in the host
-  (`[fe80::1]:30301` now parses).
-
-Breaking config changes (client side):
-- Client-config option prefix `orig-*` renamed to `server-*` for
-  consistency with the internal trunk-request keys and with the
-  existing `server-classification-*` group. Specifically:
-  `orig-snmp-<x>-pattern` -> `server-snmp-<x>-pattern` (11 pattern
-  attributes), `orig-snmp-peer-id` -> `server-snmp-entity-id`,
-  `matching-orig-snmp-peer-id-list` ->
-  `matching-server-snmp-entity-id-list`. No backward-compat alias;
-  client configs carried forward from 0.4.x must be renamed.
 
 Internals:
 - CLI migrated from getopt to argparse. All legacy flag names and

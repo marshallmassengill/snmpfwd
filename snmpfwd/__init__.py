@@ -5,4 +5,4 @@
 # License: https://www.pysnmp.com/snmpfwd/license.html
 #
 # http://www.python.org/dev/peps/pep-0396/
-__version__ = '0.5.0'
+__version__ = '0.5.1'
