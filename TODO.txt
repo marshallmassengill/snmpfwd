@@ -1,8 +1,6 @@
 
 * more defaulted configuration options
 * add more configuration examples
-* ship systemd unit files for snmpfwd-server and snmpfwd-client (with
-  example install instructions)
 * add some drawings explaining network topology in different configurations
 * unify network endpoint string parser defaulting port part
 * implement PDU split at content map

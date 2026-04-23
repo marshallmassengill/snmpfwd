@@ -1,0 +1,39 @@
+[Unit]
+Description=SNMP Proxy Forwarder - client
+Documentation=https://github.com/marshallmassengill/snmpfwd
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+ExecStart=/usr/local/bin/snmpfwd-client --config-file=/etc/snmpfwd/client.conf --logging-method=stderr --log-level=info
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5s
+KillSignal=SIGTERM
+TimeoutStopSec=15s
+
+# Filesystem hardening. DynamicUser=yes already implies a lot of the
+# below, but being explicit survives systemd defaults changes.
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+NoNewPrivileges=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+
+# The client part of snmpfwd typically originates traffic toward
+# backend SNMP agents and does not bind to privileged ports. If your
+# deployment uses transparent-proxy mode or virtual-interface spoofing,
+# enable the capabilities below.
+# CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+# AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+
+[Install]
+WantedBy=multi-user.target
