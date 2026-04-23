@@ -113,7 +113,8 @@ Getting help
 ------------
 
 This is a personal fork — issues and PRs are welcome on this repository,
-but this code is not being contributed back to lextudio/snmpfwd upstream.
+but this code is not planned on being contributed directly back to
+lextudio/snmpfwd upstream.
 
 For questions about the upstream project, see
 [lextudio/snmpfwd](https://github.com/lextudio/snmpfwd).
