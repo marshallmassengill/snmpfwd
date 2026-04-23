@@ -279,9 +279,10 @@ def setLogger(progId, *priv, **options):
     """Install a handler on the snmpfwd logger based on --logging-method args.
 
     `priv[0]` is the method name (entry in methodsMap); the remaining priv
-    elements are method-specific arguments. `force=True` causes existing
-    handlers to be removed before attaching the new one; otherwise this is
-    a no-op after the first call."""
+    elements are method-specific arguments. `force=True` clears any
+    existing handlers on the target logger before attaching; `force=False`
+    (the default) appends, so the caller can wire up multiple sinks by
+    invoking this function once per sink."""
     global _logger
 
     if not priv:
@@ -302,10 +303,6 @@ def setLogger(progId, *priv, **options):
     if options.get('force'):
         for existing in list(new_logger.handlers):
             new_logger.removeHandler(existing)
-    elif any(not isinstance(h, logging.NullHandler) for h in new_logger.handlers):
-        # Already configured and no forced reconfiguration — do nothing.
-        _logger = new_logger
-        return
 
     new_logger.addHandler(factory(list(priv[1:])))
     _logger = new_logger

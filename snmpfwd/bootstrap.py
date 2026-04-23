@@ -68,10 +68,14 @@ def bootstrap_cli_and_logging(
     args = parser.parse_args()
     cli.apply_debug_flags(args, program_name)
 
-    logging_method = args.logging_method.split(':')
+    logging_methods = args.logging_method or ['stderr']
     with daemon.PrivilegesOf(args.process_user, args.process_group):
         try:
-            log.setLogger(program_name, *logging_method, force=True)
+            for i, spec in enumerate(logging_methods):
+                # force=True on the first spec clears the default NullHandler
+                # (and any stale handlers from a previous setLogger call);
+                # subsequent specs append their sink alongside.
+                log.setLogger(program_name, *spec.split(':'), force=(i == 0))
             if args.log_level:
                 log.setLevel(args.log_level)
         except SnmpfwdError:

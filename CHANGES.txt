@@ -43,6 +43,13 @@ Features:
   and snmpfwd-client. DynamicUser=yes, journal-captured stderr,
   CAP_NET_BIND_SERVICE for 161/udp, `systemctl reload` wired to
   SIGHUP for on-the-fly routing reload.
+- `--logging-method` is now repeatable. Each occurrence attaches an
+  additional log sink, so records fan out to every configured method
+  in parallel. Example: `--logging-method=stderr
+  --logging-method=file:/var/log/snmpfwd/server.log:10m`. Omitting the
+  flag still defaults to a single stderr sink. `log.setLogger`'s
+  semantics change to match — `force=True` clears existing handlers,
+  `force=False` (the new default) appends.
 
 Breaking config changes (client side):
 - Client-config option prefix `orig-*` renamed to `server-*` for

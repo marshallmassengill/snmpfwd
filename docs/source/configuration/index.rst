@@ -105,6 +105,16 @@ would store its PID.
 SNMP Proxy Forwarder daemons can log using one of the following methods.
 The default is *stderr*.
 
+The *--logging-method* option may be given more than once to attach
+multiple sinks in parallel. Each log record is then emitted to every
+configured sink. For example, to tee log output to stderr and a
+rotating file::
+
+    snmpfwd-server \
+        --logging-method=stderr \
+        --logging-method=file:/var/log/snmpfwd/server.log:10m \
+        --config-file=/etc/snmpfwd/server.conf
+
 **--logging-method=syslog**
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

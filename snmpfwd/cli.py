@@ -98,9 +98,13 @@ def build_parser(*, prog_name: str, synopsis: str,
         help='Write the PID to FILE after daemonization.',
     )
     parser.add_argument(
-        '--logging-method', metavar='METHOD[:args]', default='stderr',
+        '--logging-method', metavar='METHOD[:args]',
+        action='append', default=None,
         help=('Logging sink. One of: ' + '|'.join(log.methodsMap)
-              + '. Method-specific arguments follow the colon.'),
+              + '. Method-specific arguments follow the colon. May be '
+              'given more than once to attach multiple sinks (e.g. '
+              '--logging-method=stderr --logging-method=file:/var/log/snmpfwd.log); '
+              'defaults to a single `stderr` sink if omitted.'),
     )
     parser.add_argument(
         '--log-level', choices=list(log.levelsMap), default=None,
