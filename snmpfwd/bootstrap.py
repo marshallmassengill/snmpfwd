@@ -252,6 +252,90 @@ def register_metrics_timer(
     )
 
 
+def start_metrics_agent(transport_dispatcher: AsyncioDispatcher) -> None:
+    """Optionally stand up a dedicated SNMP v2c agent that serves the
+    counters registered in `snmpfwd.metrics` under the
+    `snmpfwd.metrics_mib` OID subtree.
+
+    Configuration (environment variables, opt-in):
+
+    - `SNMPFWD_METRICS_SNMP_BIND=<host>:<port>` — address the metrics
+      agent listens on. If unset, this function is a no-op. The host
+      must be IPv4; IPv6 is not yet wired up.
+    - `SNMPFWD_METRICS_SNMP_COMMUNITY=<name>` — read-only community
+      string. Defaults to `public`.
+
+    The agent runs inside the existing event loop by reusing the
+    `transport_dispatcher` the rest of snmpfwd already shares. It binds
+    its OWN `SnmpEngine` and transport-domain OID so it doesn't
+    interfere with any forwarding engines configured by the calling
+    program."""
+    bind = os.environ.get('SNMPFWD_METRICS_SNMP_BIND', '').strip()
+    if not bind:
+        return
+
+    try:
+        host, port_str = bind.rsplit(':', 1)
+        host = host.strip('[]')
+        port = int(port_str)
+    except (ValueError, TypeError):
+        log.error('SNMPFWD_METRICS_SNMP_BIND=%r is not <host>:<port>; '
+                  'metrics SNMP agent not started' % bind)
+        return
+
+    community = os.environ.get('SNMPFWD_METRICS_SNMP_COMMUNITY', 'public')
+
+    # Local imports — these aren't needed when the feature is off, and
+    # importing at module scope pulls in the pysnmp MIB builder during
+    # every bootstrap run.
+    from pysnmp.carrier.asyncio.dgram import udp
+    from pysnmp.entity import engine, config as pysnmp_config
+    from pysnmp.entity.rfc3413 import cmdrsp, context
+
+    from snmpfwd import metrics_mib
+
+    # A private transport-domain OID so this agent's transport doesn't
+    # collide with forwarding transports on the same dispatcher.
+    metrics_transport_domain = udp.domainName + (999,)
+
+    metrics_engine = engine.SnmpEngine()
+    metrics_engine.register_transport_dispatcher(
+        transport_dispatcher, metrics_transport_domain,
+    )
+
+    try:
+        transport = udp.UdpTransport(
+            loop=transport_dispatcher.loop
+        ).openServerMode((host, port))
+    except Exception:
+        log.error('metrics SNMP agent cannot bind %s:%d: %s'
+                  % (host, port, sys.exc_info()[1]))
+        return
+
+    pysnmp_config.addSocketTransport(
+        metrics_engine, metrics_transport_domain, transport,
+    )
+    pysnmp_config.addV1System(metrics_engine, community, community)
+    pysnmp_config.addVacmUser(
+        metrics_engine, 2, community, 'noAuthNoPriv',
+        metrics_mib.METRICS_ROOT_OID, metrics_mib.METRICS_ROOT_OID,
+    )
+
+    snmp_context = context.SnmpContext(metrics_engine)
+    metrics_mib.register_metrics_mib(metrics_engine)
+
+    # Serve GET / GETNEXT / GETBULK; no SET support (no config below).
+    cmdrsp.GetCommandResponder(metrics_engine, snmp_context)
+    cmdrsp.NextCommandResponder(metrics_engine, snmp_context)
+    cmdrsp.BulkCommandResponder(metrics_engine, snmp_context)
+
+    log.info(
+        'metrics SNMP agent listening at %s:%d (community=%s), MIB root %s'
+        % (host, port, community,
+           '.'.join(str(x) for x in metrics_mib.METRICS_ROOT_OID))
+    )
+
+
 def _install_signal_handlers(loop) -> None:
     """Wire SIGTERM/SIGINT/SIGQUIT to stop the event loop. SIGHUP is
     deliberately excluded — `install_reload_handler` claims it for

@@ -1,19 +1,18 @@
 
-* more defaulted configuration options
 * add more configuration examples
-* add some drawings explaining network topology in different configurations
-* implement PDU split at content map
-* formalize request splitting-merging logic
-* migrate the logging plugin to use its own logger infrastructure
 * cross-link options in configuration docs
-* expose runtime counters as an SNMP table (periodic log dump is shipped)
 * extend SIGHUP reload to cover trunks, credentials, and plugin modules
   (currently only routing maps and classifier lists reload on SIGHUP)
 * end-to-end integration test for transparent-proxy / virtual-interface
   mode (needs Linux iptables TPROXY + root in the test environment; the
   lcd monkey patch is unit-tested via test_target_override.py but not
   exercised end-to-end)
-* further optimize GETBULK PDU handling at the oidfilter plugin
-  - when linearlized var-binds might produce less than max-repeaters,
-    add some more repeaters from the oidfilter rule that follows
-  - strip nullified rows off the response PDU PDU
+
+(Dropped from this list as ambiguous inherited-author notes with no
+implementation spec: "more defaulted configuration options",
+"implement PDU split at content map", "formalize request splitting-
+merging logic", "migrate the logging plugin to use its own logger
+infrastructure", "add some drawings explaining network topology",
+"further optimize GETBULK PDU handling at the oidfilter plugin"
+— the plugin is correct today and the proposed sub-items either
+change subtle invariants or only shave PDU size.)

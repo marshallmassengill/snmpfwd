@@ -50,6 +50,18 @@ Features:
   flag still defaults to a single stderr sink. `log.setLogger`'s
   semantics change to match — `force=True` clears existing handlers,
   `force=False` (the new default) appends.
+- Runtime counters are now reachable via SNMP, not just the periodic
+  log dump. Set `SNMPFWD_METRICS_SNMP_BIND=<host>:<port>` on either
+  snmpfwd-server or snmpfwd-client and an in-process read-only v2c
+  agent serves the `snmpfwd.metrics` registry under the OID subtree
+  exported by `snmpfwd.metrics_mib` (default root
+  `1.3.6.1.4.1.55555.1.2`; a placeholder — override
+  `metrics_mib.METRICS_ROOT_OID` if you have a real IANA PEN).
+  Community is `public` by default, overridable with
+  `SNMPFWD_METRICS_SNMP_COMMUNITY`. GET/GETNEXT/GETBULK only — no
+  writes, and the agent has its own private transport-domain OID so
+  it doesn't interfere with configured forwarding transports. When
+  the env var is unset (the default) nothing is started.
 - `logger` plugin: the `[file] destination` option now accepts
   `${...}` macros from the request's trunk-message context. The
   first time a given resolved path is seen the plugin creates (and

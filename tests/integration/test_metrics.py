@@ -68,3 +68,59 @@ def test_requests_forwarded_counter(snmpfwd_proxy):
         snmpfwd_proxy.server_log, 'server.requests_forwarded=',
     )
     assert 'server.requests_forwarded=' in log
+
+
+# ---------------------------------------------------------------------------
+# Counters-as-SNMP-MIB
+
+
+def test_metrics_agent_serves_trunk_up_counter(snmpfwd_proxy_with_metrics_agent):
+    """With SNMPFWD_METRICS_SNMP_BIND set, snmpfwd-server stands up a
+    read-only v2c agent. A GET on the trunk.connections_up OID should
+    return Counter32: 1 (trunk came up during fixture setup)."""
+    from snmpfwd import metrics, metrics_mib
+    oid = '.' + '.'.join(
+        str(x) for x in metrics_mib.oid_for(metrics.TRUNK_CONNECTIONS_UP)
+    )
+    vbs = snmp_get(
+        target=snmpfwd_proxy_with_metrics_agent.metrics_agent_address,
+        community=snmpfwd_proxy_with_metrics_agent.metrics_agent_community,
+        oids=[oid],
+    )
+    assert len(vbs) == 1
+    assert vbs[0].type_name.lower() == 'counter32'
+    assert int(vbs[0].value) >= 1, (
+        f'expected trunk.connections_up >= 1, got {vbs[0].value!r}'
+    )
+
+
+def test_metrics_agent_reflects_live_request_counter(
+    snmpfwd_proxy_with_metrics_agent,
+):
+    """Driving a successful GET through the forwarding path must be
+    visible via SNMP on the metrics agent — the scalar reads the live
+    counter, so the value tracks within the same process."""
+    from snmpfwd import metrics, metrics_mib
+    oid = '.' + '.'.join(
+        str(x) for x in metrics_mib.oid_for(metrics.SERVER_REQUESTS_FORWARDED)
+    )
+    # Baseline
+    baseline = int(snmp_get(
+        target=snmpfwd_proxy_with_metrics_agent.metrics_agent_address,
+        community=snmpfwd_proxy_with_metrics_agent.metrics_agent_community,
+        oids=[oid],
+    )[0].value)
+    # Drive a forwarded GET
+    snmp_get(
+        target=snmpfwd_proxy_with_metrics_agent.listen_address,
+        community=snmpfwd_proxy_with_metrics_agent.listen_community,
+        oids=[SYS_DESCR],
+    )
+    after = int(snmp_get(
+        target=snmpfwd_proxy_with_metrics_agent.metrics_agent_address,
+        community=snmpfwd_proxy_with_metrics_agent.metrics_agent_community,
+        oids=[oid],
+    )[0].value)
+    assert after > baseline, (
+        f'requests_forwarded did not tick: baseline={baseline}, after={after}'
+    )

@@ -950,6 +950,7 @@ def main():
     bootstrap.configure_trunks(cfgTree, trunkingManager)
     bootstrap.register_trunk_timers(transportDispatcher, trunkingManager)
     bootstrap.register_metrics_timer(transportDispatcher)
+    bootstrap.start_metrics_agent(transportDispatcher)
     bootstrap.install_reload_handler(transportDispatcher, reload_callback)
     bootstrap.run_dispatcher_loop(args, transportDispatcher)
 

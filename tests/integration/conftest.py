@@ -43,9 +43,12 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 BUNDLED_PLUGINS_DIR = REPO_ROOT / "plugins"
 
 # Force the metrics log-deltas timer to fire every 2s in tests so
-# counter-observing tests don't wait 60s between dumps. See
-# snmpfwd.bootstrap.register_metrics_timer.
-_SNMPFWD_ENV = {**os.environ, "SNMPFWD_METRICS_INTERVAL": "2"}
+# counter-observing tests don't wait 60s between dumps. Built lazily
+# from the live `os.environ` so `monkeypatch.setenv` in a fixture
+# propagates into the subprocess. See
+# snmpfwd.bootstrap.register_metrics_timer / .start_metrics_agent.
+def _snmpfwd_env():
+    return {**os.environ, "SNMPFWD_METRICS_INTERVAL": "2"}
 
 
 # ---------------------------------------------------------------------------
@@ -226,9 +229,16 @@ def _spawn_snmpfwd_proxy(
     backend: SnmpBackend,
     server_plugin: Optional[PluginSpec] = None,
     client_plugin: Optional[PluginSpec] = None,
+    server_env_extra: Optional[dict] = None,
+    client_env_extra: Optional[dict] = None,
 ) -> Iterator[SnmpfwdProxy]:
     """Yield a running snmpfwd client+server pair wired to `backend`. Shared
-    by the plain and plugin-enabled fixtures."""
+    by the plain and plugin-enabled fixtures.
+
+    `server_env_extra` / `client_env_extra` overlay onto the default env
+    for just the server or just the client subprocess — useful for env
+    vars that should apply to only one side (e.g. SNMPFWD_METRICS_SNMP_BIND
+    which can't double-bind the same port)."""
     listen_community = "public"
     listen_port = free_udp_port()
     trunk_port = free_tcp_port()
@@ -256,6 +266,13 @@ def _spawn_snmpfwd_proxy(
     server_log = tmp_path / "snmpfwd-server.log"
     client_log = tmp_path / "snmpfwd-client.log"
 
+    client_env = _snmpfwd_env()
+    if client_env_extra:
+        client_env.update(client_env_extra)
+    server_env = _snmpfwd_env()
+    if server_env_extra:
+        server_env.update(server_env_extra)
+
     # Trunk-server side boots first so snmpfwd-server has somewhere to connect.
     client_proc = spawn_supervised(
         name="snmpfwd-client",
@@ -268,7 +285,7 @@ def _spawn_snmpfwd_proxy(
         log_path=tmp_path / "snmpfwd-client.stdouterr.log",
         ready=lambda: tcp_port_open("127.0.0.1", trunk_port),
         ready_timeout=15.0,
-        env=_SNMPFWD_ENV,
+        env=client_env,
     )
     server_proc = None
     try:
@@ -283,7 +300,7 @@ def _spawn_snmpfwd_proxy(
             log_path=tmp_path / "snmpfwd-server.stdouterr.log",
             ready=lambda: log_contains(server_log, "client is now connected"),
             ready_timeout=15.0,
-            env=_SNMPFWD_ENV,
+            env=server_env,
         )
         yield SnmpfwdProxy(
             backend=backend,
@@ -308,6 +325,48 @@ def _spawn_snmpfwd_proxy(
 def snmpfwd_proxy(tmp_path: Path, any_backend: SnmpBackend) -> Iterator[SnmpfwdProxy]:
     """Spawn snmpfwd-client + snmpfwd-server with no plugins configured."""
     yield from _spawn_snmpfwd_proxy(tmp_path=tmp_path, backend=any_backend)
+
+
+@dataclasses.dataclass
+class SnmpfwdProxyWithMetricsAgent(SnmpfwdProxy):
+    metrics_agent_address: str = None   # "127.0.0.1:<port>"
+    metrics_agent_community: str = None
+
+
+@pytest.fixture
+def snmpfwd_proxy_with_metrics_agent(
+    tmp_path: Path, any_backend: SnmpBackend,
+) -> Iterator["SnmpfwdProxyWithMetricsAgent"]:
+    """Spawn the proxy with the metrics-MIB SNMP agent enabled on the
+    server side only via SNMPFWD_METRICS_SNMP_BIND. (Enabling it on
+    both sides would double-bind the same UDP port.) Agent is read-only
+    v2c with community `public`."""
+    metrics_port = free_udp_port()
+    metrics_community = "public"
+    server_env_extra = {
+        "SNMPFWD_METRICS_SNMP_BIND": f"127.0.0.1:{metrics_port}",
+        "SNMPFWD_METRICS_SNMP_COMMUNITY": metrics_community,
+    }
+
+    for proxy in _spawn_snmpfwd_proxy(
+        tmp_path=tmp_path, backend=any_backend,
+        server_env_extra=server_env_extra,
+    ):
+        yield SnmpfwdProxyWithMetricsAgent(
+            backend=proxy.backend,
+            listen_address=proxy.listen_address,
+            listen_port=proxy.listen_port,
+            listen_community=proxy.listen_community,
+            trunk_port=proxy.trunk_port,
+            server_log=proxy.server_log,
+            client_log=proxy.client_log,
+            server_config_path=proxy.server_config_path,
+            client_config_path=proxy.client_config_path,
+            server_pid=proxy.server_pid,
+            client_pid=proxy.client_pid,
+            metrics_agent_address=f"127.0.0.1:{metrics_port}",
+            metrics_agent_community=metrics_community,
+        )
 
 
 @pytest.fixture
@@ -502,7 +561,7 @@ def _spawn_snmpfwd_trap_proxy(
         log_path=tmp_path / "snmpfwd-client.stdouterr.log",
         ready=lambda: tcp_port_open("127.0.0.1", trunk_port),
         ready_timeout=15.0,
-        env=_SNMPFWD_ENV,
+        env=_snmpfwd_env(),
     )
     server_proc = None
     try:
@@ -517,7 +576,7 @@ def _spawn_snmpfwd_trap_proxy(
             log_path=tmp_path / "snmpfwd-server.stdouterr.log",
             ready=lambda: log_contains(server_log, "client is now connected"),
             ready_timeout=15.0,
-            env=_SNMPFWD_ENV,
+            env=_snmpfwd_env(),
         )
         yield SnmpfwdTrapProxy(
             backend=backend,
