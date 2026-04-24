@@ -54,6 +54,41 @@ Tests:
 - tests/integration/test_metrics.py: add `snmpwalk` coverage for
   the metrics MIB subtree — asserts every registered counter OID
   comes back typed as Counter32.
+- tests/integration/test_commands.py: two new cases for SNMP error
+  responses — `noSuchObject` / `noSuchInstance` on a missing
+  scalar, and `endOfMibView` on a GETNEXT past the top of the MIB
+  tree. Confirms the agent's error varbinds round-trip through the
+  proxy unchanged.
+- tests/integration/test_traps.py: new `test_trapv1_forwards_via_translation`
+  case. Dedicated fixture spawns a server with both v1 and v2c
+  credentials so a `snmptrap -v1` reaches snmpfwd-server, hits the
+  `rfc2576.v1_to_v2` translator on the way over the trunk, and
+  lands in snmptrapd as a v2c trap. Exercises the v1 notification-
+  receiver + translation path that has the highest regression risk
+  on the modern pysnmp.
+- tests/integration/test_trunk_encryption.py (new): two cases
+  covering `trunk-crypto-key`. Matching keys on both sides: GET
+  round-trips through the AES-encrypted trunk. Mismatched keys:
+  the snmpget times out — the crypto layer must refuse to pass
+  traffic rather than silently succeed.
+- tests/integration/test_protocol_translation.py (new): two cases
+  exercising the headline "v2c in / v3 out" and "v3 in / v2c out"
+  proxy roles. Confirms the proxy decodes on one side and re-encodes
+  for the other rather than passing bytes through.
+- tests/integration/test_daemonize.py (new): spawn snmpfwd-server
+  with `--daemonize --pid-file`. Assert the launcher exits rc=0
+  quickly, the PID file names a live grandchild process, the
+  daemon connects its trunk, and a forwarded SNMP GET still
+  round-trips. Covers the double-fork / detach path that every
+  other integration test avoided.
+- tests/integration/test_plugin_status.py (new): three cases
+  covering the plugin-framework status codes beyond `NEXT`.
+  `RESPOND` has the plugin synthesize a response PDU that reaches
+  the manager without the backend being queried; `DROP` has the
+  request dropped silently (manager times out); `BREAK` halts the
+  plugin chain so later plugins in the same route don't mutate
+  the PDU. Uses a generated test plugin whose behaviour is
+  controlled by `status=<NAME>` / `marker=<TEXT>` module options.
 
 
 Revision 0.5.1, released 23-04-2026
