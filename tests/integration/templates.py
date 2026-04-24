@@ -473,3 +473,195 @@ def render_server_tproxy_conf(*, snmp_listen_port: int, snmp_engine_id: str,
         listen_community=listen_community,
         trunk_port=trunk_port,
     )
+
+
+# SNMPv3 (USM, authPriv) server/client configs. Manager-facing and
+# backend-facing sides use intentionally DIFFERENT USM users and keys
+# so a passing test proves the proxy is decrypting and re-encrypting
+# across the trunk (rather than passing the v3 wire bytes through
+# unchanged).
+SERVER_V3_CONF = """\
+config-version: 2
+program-name: snmpfwd-server
+
+snmp-credentials-group {{
+  snmp-transport-domain: 1.3.6.1.6.1.1.100
+  snmp-bind-address: 127.0.0.1:{snmp_listen_port}
+
+  snmp-engine-id: {snmp_engine_id}
+
+  snmp-security-model: 3
+  snmp-security-level: 3
+
+  snmp-security-name: {v3_user}
+  snmp-usm-user: {v3_user}
+  snmp-usm-auth-protocol: sha
+  snmp-usm-auth-key: {v3_auth_key}
+  snmp-usm-priv-protocol: aes
+  snmp-usm-priv-key: {v3_priv_key}
+
+  snmp-credentials-id: creds-1
+}}
+
+context-group {{
+  snmp-context-engine-id-pattern: .*?
+  snmp-context-name-pattern: .*?
+
+  snmp-context-id: any-context
+}}
+
+content-group {{
+  snmp-pdu-type-pattern: .*?
+  snmp-pdu-oid-prefix-pattern-list: .*?
+
+  snmp-content-id: any-content
+}}
+
+peers-group {{
+  snmp-transport-domain: 1.3.6.1.6.1.1.100
+  snmp-bind-address-pattern-list: .*?
+  snmp-peer-address-pattern-list: .*?
+
+  snmp-peer-id: 100
+}}
+
+trunking-group {{
+  trunk-bind-address: 127.0.0.1
+  trunk-peer-address: 127.0.0.1:{trunk_port}
+  trunk-ping-period: 60
+  trunk-connection-mode: client
+
+  trunk-id: trunk-1
+}}
+
+routing-map {{
+  matching-snmp-context-id-list: any-context
+  matching-snmp-content-id-list: any-content
+
+  matching-snmp-credentials-id-list: creds-1
+  matching-snmp-peer-id-list: 100
+
+  using-trunk-id-list: trunk-1
+}}
+"""
+
+
+def render_server_v3_conf(*, snmp_listen_port: int, snmp_engine_id: str,
+                          trunk_port: int, v3_user: str,
+                          v3_auth_key: str, v3_priv_key: str) -> str:
+    return SERVER_V3_CONF.format(
+        snmp_listen_port=snmp_listen_port,
+        snmp_engine_id=snmp_engine_id,
+        trunk_port=trunk_port,
+        v3_user=v3_user,
+        v3_auth_key=v3_auth_key,
+        v3_priv_key=v3_priv_key,
+    )
+
+
+CLIENT_V3_CONF = """\
+config-version: 2
+program-name: snmpfwd-client
+
+peers-group {{
+  snmp-engine-id: {snmp_engine_id}
+
+  snmp-transport-domain: 1.3.6.1.6.1.1.1
+  snmp-bind-address: 0.0.0.0:0
+
+  snmp-peer-timeout: 500
+  snmp-peer-retries: 0
+
+  snmp-security-model: 3
+  snmp-security-level: 3
+
+  snmp-security-name: {v3_user}
+  snmp-usm-user: {v3_user}
+  snmp-usm-auth-protocol: sha
+  snmp-usm-auth-key: {v3_auth_key}
+  snmp-usm-priv-protocol: aes
+  snmp-usm-priv-key: {v3_priv_key}
+
+  snmp-peer-address: 127.0.0.1:{backend_port}
+  snmp-peer-id: backend-1
+}}
+
+trunking-group {{
+  trunk-bind-address: 127.0.0.1:{trunk_port}
+  trunk-ping-period: 60
+  trunk-connection-mode: server
+
+  trunk-id: <discover>
+}}
+
+server-snmp-entity-info-group {{
+  server-snmp-bind-address-pattern: .*?
+  server-snmp-context-name-pattern: .*?
+
+  server-snmp-pdu-type-pattern: .*?
+  server-snmp-oid-prefix-pattern: .*?
+
+  server-snmp-engine-id-pattern: .*?
+  server-snmp-context-engine-id-pattern: .*?
+
+  server-snmp-transport-domain-pattern: .*?
+  server-snmp-peer-address-pattern: .*?
+
+  server-snmp-security-level-pattern: .*?
+  server-snmp-security-name-pattern: .*?
+  server-snmp-security-model-pattern: .*?
+
+  server-snmp-entity-id: any-manager
+}}
+
+server-classification-group {{
+  server-snmp-context-id-pattern: .*?
+  server-snmp-content-id-pattern: .*?
+  server-snmp-peer-id-pattern: .*?
+  server-snmp-credentials-id-pattern: .*?
+
+  server-classification-id: pass-through
+}}
+
+routing-map {{
+  matching-trunk-id-list: trunk-1
+  matching-server-snmp-entity-id-list: any-manager
+  matching-server-classification-id-list: pass-through
+
+  using-snmp-peer-id-list: backend-1
+}}
+"""
+
+
+def render_client_v3_conf(*, snmp_engine_id: str, backend_port: int,
+                          trunk_port: int, v3_user: str,
+                          v3_auth_key: str, v3_priv_key: str) -> str:
+    return CLIENT_V3_CONF.format(
+        snmp_engine_id=snmp_engine_id,
+        backend_port=backend_port,
+        trunk_port=trunk_port,
+        v3_user=v3_user,
+        v3_auth_key=v3_auth_key,
+        v3_priv_key=v3_priv_key,
+    )
+
+
+SNMPD_V3_CONF = """\
+# net-snmp snmpd config (integration test, SNMPv3)
+syslocation "{sys_location}"
+syscontact "{sys_contact}"
+sysServices 72
+# v3 user is created out-of-band via snmpd's --createUser= arg so the
+# USM user's localized keys get set up before the daemon opens its
+# listening socket. Here we just authorize it read-only with privacy.
+rouser {v3_user} priv
+"""
+
+
+def render_snmpd_v3_conf(*, v3_user: str,
+                         sys_location: str, sys_contact: str) -> str:
+    return SNMPD_V3_CONF.format(
+        v3_user=v3_user,
+        sys_location=sys_location,
+        sys_contact=sys_contact,
+    )

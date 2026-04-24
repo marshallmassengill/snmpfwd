@@ -33,6 +33,11 @@ python = "^3.11"
 pysnmp = "^7.1"
 pyasn1 = "^0.6"
 pycryptodomex = "^3.20"
+# pysnmp 7's DES/AES USM priv implementations import `cryptography`
+# (DES from `cryptography.hazmat.decrepit.ciphers`) unconditionally but
+# only declare it as a dev-extra, so an install without this package
+# silently breaks SNMPv3 authPriv at runtime.
+cryptography = ">=44.0.1"
 
 [tool.poetry.dev-dependencies]
 codecov = "^2.1.12"

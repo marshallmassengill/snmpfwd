@@ -1,4 +1,28 @@
 
+Revision 0.5.2 (unreleased)
+---------------------------
+
+Fixes:
+- Add `cryptography >= 44.0.1` as a runtime dependency. pysnmp 7's
+  DES and AES USM-privacy implementations import from
+  `cryptography.hazmat.decrepit.ciphers` / `primitives.ciphers`
+  unconditionally but only declare `cryptography` as a `[dev]`
+  extra, so environments that pip-installed snmpfwd without pulling
+  dev extras silently failed every SNMPv3 authPriv request with
+  `decryptionError: Ciphering services not available or ciphertext
+  is broken`. v2c-only deployments were unaffected. No user-visible
+  API change — the fix is to make the dep explicit.
+
+Tests:
+- tests/integration/test_snmpv3.py: end-to-end SNMPv3 (USM, SHA auth
+  + AES priv, authPriv) coverage. Manager and backend use DIFFERENT
+  USM users and keys so a passing query proves the proxy is
+  decrypting and re-encrypting across the trunk rather than passing
+  wire bytes through. Also asserts that wrong-password and
+  unknown-user reach `securityAuditObserver` and produce rejection
+  rather than forwarding.
+
+
 Revision 0.5.1, released 23-04-2026
 -----------------------------------
 
