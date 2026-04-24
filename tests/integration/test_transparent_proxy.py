@@ -410,7 +410,10 @@ def _diagnostic_dump(stack: dict) -> str:
     def _grab(cmd):
         r = _run_quiet(cmd)
         return f"$ {' '.join(cmd)}\n{r.stdout}{r.stderr}".rstrip()
+
+    ns = stack["ns"]
     parts = [
+        # Host-side netfilter + routing state for the TPROXY path.
         _grab(["iptables", "-t", "mangle", "-L", "PREROUTING", "-v", "-n", "-x"]),
         _grab(["ip", "rule", "show"]),
         _grab(["ip", "route", "show", "table", str(_TABLE)]),
@@ -419,7 +422,15 @@ def _diagnostic_dump(stack: dict) -> str:
                "net.ipv4.conf.all.rp_filter",
                "net.ipv4.conf.default.rp_filter",
                f"net.ipv4.conf.{_VH}.rp_filter"]),
-        _grab(["ss", "-lun", "-p"]),
+        _grab(["ip", "-d", "link", "show", "dev", _VH]),
+        # Netns-side: interface up?, routing correct?, can it actually
+        # reach the host? — if ping to the host gateway fails the TPROXY
+        # rule will never see traffic regardless of iptables setup.
+        _grab(["ip", "netns", "exec", ns, "ip", "-o", "link", "show"]),
+        _grab(["ip", "netns", "exec", ns, "ip", "-o", "addr", "show"]),
+        _grab(["ip", "netns", "exec", ns, "ip", "route", "show"]),
+        _grab(["ip", "netns", "exec", ns, "ping", "-c", "1", "-W", "1", _HOST_IP]),
+        _grab(["ss", "-lun"]),
     ]
     return "\n\n".join(parts)
 
