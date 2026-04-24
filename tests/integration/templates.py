@@ -406,7 +406,11 @@ program-name: snmpfwd-server
 snmp-credentials-group {{
   snmp-transport-domain: 1.3.6.1.6.1.1.100
   snmp-transport-options: transparent-proxy
-  snmp-bind-address: 127.0.0.1:{snmp_listen_port}
+  # Must bind wildcard (0.0.0.0) for transparent-proxy — the kernel's
+  # TPROXY socket lookup won't claim a packet whose original
+  # destination IP differs from the socket's specific bind address
+  # even with IP_TRANSPARENT set.
+  snmp-bind-address: 0.0.0.0:{snmp_listen_port}
 
   snmp-engine-id: {snmp_engine_id}
 
