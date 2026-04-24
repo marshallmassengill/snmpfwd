@@ -391,3 +391,81 @@ def render_client_trap_conf(*, snmp_engine_id: str, backend_community: str,
         backend_port=backend_port,
         trunk_port=trunk_port,
     )
+
+
+# Server config for the transparent-proxy E2E test. Matches SERVER_CONF
+# except for the `snmp-transport-options: transparent-proxy` bit on the
+# credentials group, which flips `IP_TRANSPARENT` + `IP_PKTINFO` on the
+# listening socket so that packets redirected in via the iptables TPROXY
+# rule land here and the engine's observer can read the original
+# destination IP out of the ancillary data.
+SERVER_TPROXY_CONF = """\
+config-version: 2
+program-name: snmpfwd-server
+
+snmp-credentials-group {{
+  snmp-transport-domain: 1.3.6.1.6.1.1.100
+  snmp-transport-options: transparent-proxy
+  snmp-bind-address: 127.0.0.1:{snmp_listen_port}
+
+  snmp-engine-id: {snmp_engine_id}
+
+  snmp-community-name: {listen_community}
+  snmp-security-name: {listen_community}
+  snmp-security-model: 2
+  snmp-security-level: 1
+
+  snmp-credentials-id: creds-1
+}}
+
+context-group {{
+  snmp-context-engine-id-pattern: .*?
+  snmp-context-name-pattern: .*?
+
+  snmp-context-id: any-context
+}}
+
+content-group {{
+  snmp-pdu-type-pattern: .*?
+  snmp-pdu-oid-prefix-pattern-list: .*?
+
+  snmp-content-id: any-content
+}}
+
+peers-group {{
+  snmp-transport-domain: 1.3.6.1.6.1.1.100
+  snmp-bind-address-pattern-list: .*?
+  snmp-peer-address-pattern-list: .*?
+
+  snmp-peer-id: 100
+}}
+
+trunking-group {{
+  trunk-bind-address: 127.0.0.1
+  trunk-peer-address: 127.0.0.1:{trunk_port}
+  trunk-ping-period: 60
+  trunk-connection-mode: client
+
+  trunk-id: trunk-1
+}}
+
+routing-map {{
+  matching-snmp-context-id-list: any-context
+  matching-snmp-content-id-list: any-content
+
+  matching-snmp-credentials-id-list: creds-1
+  matching-snmp-peer-id-list: 100
+
+  using-trunk-id-list: trunk-1
+}}
+"""
+
+
+def render_server_tproxy_conf(*, snmp_listen_port: int, snmp_engine_id: str,
+                              listen_community: str, trunk_port: int) -> str:
+    return SERVER_TPROXY_CONF.format(
+        snmp_listen_port=snmp_listen_port,
+        snmp_engine_id=snmp_engine_id,
+        listen_community=listen_community,
+        trunk_port=trunk_port,
+    )

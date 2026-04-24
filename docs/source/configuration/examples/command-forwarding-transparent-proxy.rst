@@ -98,3 +98,51 @@ Client is configured to:
 
 :download:`Download </../../conf/command-forwarding-transparent-proxy/client.conf>` client configuration file.
 
+Validating the setup
+--------------------
+
+The snmpfwd test suite ships an end-to-end transparent-proxy validation
+under ``tests/integration/test_transparent_proxy.py``. The test exercises
+the server-side path described above — iptables mangle PREROUTING,
+TPROXY delivery into an ``IP_TRANSPARENT`` socket, original-destination
+capture via ``IP_PKTINFO``, and forwarding through the trunk to a normal
+snmpfwd-client and backend snmpd.
+
+Because the test manipulates netns, veth, iptables, and the routing
+table, it is gated by ``os.geteuid() != 0`` and auto-skips in CI. To
+run it locally::
+
+    sudo -E $(which pytest) -v tests/integration/test_transparent_proxy.py
+
+(``sudo -E`` preserves ``$PATH`` so the ``snmpfwd-server`` /
+``snmpfwd-client`` scripts installed in your venv stay discoverable.
+If you pip-installed system-wide, plain ``sudo pytest ...`` is fine.)
+
+The test is self-contained: it creates a dedicated netns
+(``snmpfwd-tp-mgr``), a veth pair, the 192.0.2.0/24 topology (from
+TEST-NET-1, documentation-reserved), the iptables + ip-rule + ip-route
+wiring, the backend snmpd, and the snmpfwd pair — then drives an
+``snmpget`` from inside the netns toward the virtual IP, asserts a
+response comes back, and tears everything down on exit. A
+best-effort pre-setup cleanup removes any stale state from a
+previously-crashed run, so wedged iptables rules or leftover netns
+won't block a rerun.
+
+Teardown (if you ever need to clean up manually)
+------------------------------------------------
+
+If a run crashes hard and leaves state behind, the fixture's
+pre-setup cleanup removes it on the next attempt. To do it by hand::
+
+    # Remove iptables TPROXY rules targeting the test virtual IP
+    iptables -t mangle -S PREROUTING | grep 192.0.2.100 | \
+        sed 's/^-A/-D/' | xargs -r -n1 iptables -t mangle
+
+    # Remove policy-routing hooks
+    ip rule del fwmark 0x1 lookup 100 2>/dev/null || true
+    ip route flush table 100 2>/dev/null || true
+
+    # Remove veth + netns
+    ip link del sfv-h 2>/dev/null || true
+    ip netns del snmpfwd-tp-mgr 2>/dev/null || true
+
