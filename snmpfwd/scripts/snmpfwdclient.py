@@ -488,13 +488,21 @@ def main():
                 transportDispatcher, transportDomain
             )
 
-            t = transport.openClientMode(bindAddr)
-
-            if 'transparent-proxy' in transportOptions:
-                t.enablePktInfo()
-                t.enableTransparent()
-            elif 'virtual-interface' in transportOptions:
-                t.enablePktInfo()
+            # pysnmp 7's asyncio carrier dropped enablePktInfo /
+            # enableTransparent. For transparent-proxy / virtual-interface
+            # we pre-create the socket with IP_TRANSPARENT / IP_PKTINFO
+            # (and IPv6 equivalents) set and hand it to the transport via
+            # open_server_mode(sock=...) — openClientMode has no sock=
+            # kwarg but UDP datagram sockets don't need the
+            # client-vs-server distinction; both modes just wrap a
+            # DatagramTransport around the socket.
+            if ('transparent-proxy' in transportOptions
+                    or 'virtual-interface' in transportOptions):
+                af = endpoint.transport_af_for_domain(transportDomain)
+                sock = endpoint.make_transport_socket(af, bindAddr, transportOptions)
+                t = transport.open_server_mode(sock=sock)
+            else:
+                t = transport.openClientMode(bindAddr)
 
             config.addSocketTransport(snmpEngine, transportDomain, t)
 

@@ -5,6 +5,7 @@
 # License: https://www.pysnmp.com/snmpfwd/license.html
 #
 import re
+import socket
 
 from snmpfwd.error import SnmpfwdError
 
@@ -13,6 +14,68 @@ try:
     from pysnmp.carrier.asyncio.dgram import udp6
 except ImportError:
     udp6 = None
+
+
+# Linux socket-option numbers Python's stdlib `socket` module doesn't
+# expose on every build: IP_PKTINFO and IPV6_TRANSPARENT. `IP_TRANSPARENT`
+# and `IPV6_RECVPKTINFO` are already in `socket.*`.
+_IP_PKTINFO = 8
+_IPV6_TRANSPARENT = 75
+
+
+def make_transport_socket(af, bindAddr, transportOptions):
+    """Create and bind a datagram socket with the kernel options required
+    by `snmp-transport-options = transparent-proxy | virtual-interface`.
+
+    pysnmp 4's asyncore carrier used to expose `enablePktInfo()` /
+    `enableTransparent()` helpers on the transport object. pysnmp 7's
+    asyncio carrier dropped those — but its `open_server_mode` does
+    accept a pre-built `sock=`, so we can set the options ourselves
+    before handing the socket to pysnmp.
+
+    IP_TRANSPARENT lets the socket receive packets destined for non-local
+    IPs (needed for `transparent-proxy` ingress with iptables TPROXY
+    and for spoofed-source outbound sends).  IP_PKTINFO / IPV6_RECVPKTINFO
+    get the original destination IP delivered to `recvmsg` as ancillary
+    data (needed by both `transparent-proxy` and `virtual-interface` so
+    snmpfwd can tell which bound IP a request landed on).
+    """
+    sock = socket.socket(af, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+    transparent = 'transparent-proxy' in transportOptions
+    pktinfo = transparent or 'virtual-interface' in transportOptions
+
+    if af == socket.AF_INET:
+        if transparent:
+            sock.setsockopt(socket.IPPROTO_IP, socket.IP_TRANSPARENT, 1)
+        if pktinfo:
+            sock.setsockopt(socket.IPPROTO_IP, _IP_PKTINFO, 1)
+    elif af == socket.AF_INET6:
+        if transparent:
+            sock.setsockopt(socket.IPPROTO_IPV6, _IPV6_TRANSPARENT, 1)
+        if pktinfo:
+            sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_RECVPKTINFO, 1)
+    else:
+        sock.close()
+        raise SnmpfwdError('unsupported address family %r' % (af,))
+
+    try:
+        sock.bind(bindAddr)
+    except OSError:
+        sock.close()
+        raise
+
+    return sock
+
+
+def transport_af_for_domain(transportDomain):
+    """Map a pysnmp transport-domain OID to a `socket.AF_*` constant."""
+    if transportDomain[:len(udp.domainName)] == udp.domainName:
+        return socket.AF_INET
+    if udp6 is not None and transportDomain[:len(udp6.domainName)] == udp6.domainName:
+        return socket.AF_INET6
+    raise SnmpfwdError('unknown transport domain %r' % (transportDomain,))
 
 
 # Bracketed IPv6 address with an optional :port suffix.

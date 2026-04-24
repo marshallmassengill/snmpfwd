@@ -700,13 +700,18 @@ def main():
             else:
                 transport = udp6.Udp6Transport(loop=transportDispatcher.loop)
 
-            t = transport.openServerMode(bindAddr)
-
-            if 'transparent-proxy' in transportOptions:
-                t.enablePktInfo()
-                t.enableTransparent()
-            elif 'virtual-interface' in transportOptions:
-                t.enablePktInfo()
+            # pysnmp 7's asyncio carrier dropped enablePktInfo /
+            # enableTransparent. When either transport-option is
+            # requested we pre-create the socket with the kernel flags
+            # set and hand it to open_server_mode(sock=...), which is
+            # the replacement path pysnmp still supports.
+            if ('transparent-proxy' in transportOptions
+                    or 'virtual-interface' in transportOptions):
+                af = endpoint.transport_af_for_domain(transportDomain)
+                sock = endpoint.make_transport_socket(af, bindAddr, transportOptions)
+                t = transport.open_server_mode(sock=sock)
+            else:
+                t = transport.openServerMode(bindAddr)
 
             snmpEngine.register_transport_dispatcher(
                 transportDispatcher, transportDomain
