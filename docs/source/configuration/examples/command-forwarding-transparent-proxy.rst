@@ -23,6 +23,19 @@ The workflow scenario could be like this:
 
 This only works on Linux and requires superuser privileges.
 
+.. note::
+
+   Under pysnmp 7's asyncio carrier, the server socket receives packets
+   redirected by iptables TPROXY and responds from the socket's bound
+   address, but the per-packet *original destination IP* delivered via
+   ``IP_PKTINFO`` is not surfaced to snmpfwd — asyncio's high-level
+   ``DatagramProtocol.datagram_received`` discards the ancillary data
+   where PKTINFO lives. TPROXY ingress and request forwarding work; if
+   your deployment relies on snmpfwd knowing which virtual IP a query
+   landed on (for per-virtual-IP routing or log macros), use
+   ``virtual-interface`` mode with an explicit per-IP bind instead of
+   ``transparent-proxy``, or layer an external rewriter.
+
 Network configuration
 ---------------------
 
