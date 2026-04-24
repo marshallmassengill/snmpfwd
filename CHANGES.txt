@@ -21,6 +21,13 @@ Tests:
   wire bytes through. Also asserts that wrong-password and
   unknown-user reach `securityAuditObserver` and produce rejection
   rather than forwarding.
+- tests/integration/test_resiliency.py (new): (a) trunk reconnects
+  after one peer is SIGKILL'd and respawned, without restarting the
+  surviving side; (b) concurrent in-flight snmpget requests each
+  get their correct reply (request/response correlation correctness);
+  (c) snmpget against a client pointed at a dead backend port fails
+  with a clean net-snmp `Timeout` within the configured retry
+  budget and the proxy processes remain responsive afterwards.
 
 
 Revision 0.5.1, released 23-04-2026
