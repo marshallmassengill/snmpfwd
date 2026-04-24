@@ -94,6 +94,44 @@ def test_metrics_agent_serves_trunk_up_counter(snmpfwd_proxy_with_metrics_agent)
     )
 
 
+def test_metrics_agent_walk_returns_every_counter(
+    snmpfwd_proxy_with_metrics_agent,
+):
+    """A `snmpwalk` of the metrics subtree should return one row per
+    counter the metrics_mib module registers — proves GETNEXT works
+    across the MIB scalars, not just the single-OID GET that the
+    other metrics tests exercise."""
+    from .helpers import snmp_walk
+    from snmpfwd import metrics_mib
+
+    root_oid = '.' + '.'.join(str(x) for x in metrics_mib.METRICS_ROOT_OID)
+    vbs = snmp_walk(
+        target=snmpfwd_proxy_with_metrics_agent.metrics_agent_address,
+        community=snmpfwd_proxy_with_metrics_agent.metrics_agent_community,
+        oid=root_oid,
+    )
+    expected = {
+        '.' + '.'.join(str(x) for x in oid)
+        for _, oid in metrics_mib.oid_table()
+    }
+    returned = {vb.oid for vb in vbs}
+    missing = expected - returned
+    assert not missing, (
+        f'snmpwalk over the metrics MIB did not return every counter; '
+        f'missing: {sorted(missing)} — got: {sorted(returned)}'
+    )
+    # The typed rows (i.e. not the post-walk "End of MIB" sentinel our
+    # varbind parser catches with an empty type_name) must all be
+    # Counter32 — catches a regression where someone registers a scalar
+    # under the wrong SYNTAX.
+    typed = [vb for vb in vbs if vb.type_name]
+    assert typed, f'no typed varbinds in walk output: {vbs!r}'
+    for vb in typed:
+        assert vb.type_name.lower() == 'counter32', (
+            f'{vb.oid} came back as {vb.type_name!r}, expected Counter32'
+        )
+
+
 def test_metrics_agent_reflects_live_request_counter(
     snmpfwd_proxy_with_metrics_agent,
 ):
