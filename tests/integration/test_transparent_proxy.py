@@ -147,6 +147,16 @@ def _run_quiet(cmd):
     return subprocess.run(cmd, check=False, capture_output=True, text=True)
 
 
+def _sysctl_get(key: str) -> str:
+    """Return the current value of a sysctl as a stripped string."""
+    r = _run_quiet(["sysctl", "-n", key])
+    return r.stdout.strip()
+
+
+def _sysctl_set(key: str, value: str) -> None:
+    _run(["sysctl", "-w", f"{key}={value}"])
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 
@@ -188,8 +198,39 @@ def transparent_proxy_network():
 
     _teardown_stale_state(snmpfwd_port)
 
+    # Snapshot the sysctls we may need to flip, so we can restore them
+    # on teardown even if setup fails partway.
+    saved_sysctls = {
+        key: _sysctl_get(key) for key in (
+            "net.ipv4.ip_forward",
+            "net.ipv4.conf.all.rp_filter",
+            "net.ipv4.conf.default.rp_filter",
+        )
+    }
+
     undo = []
+    # Always register sysctl restoration first so even a teardown_stale
+    # that left state behind gets reverted on exit.
+    for key, value in saved_sysctls.items():
+        undo.append(["sysctl", "-w", f"{key}={value}"])
+
     try:
+        # TPROXY wants packets delivered "locally" even when their
+        # destination IP isn't on the host. That journey crosses the
+        # routing decision the kernel normally gates on
+        # net.ipv4.ip_forward; enable it for the duration of the test.
+        # rp_filter=0 on the inbound side removes the reverse-path
+        # filter check for the veth (belt-and-braces — our source IP
+        # IS reachable via the same interface, but some kernels apply
+        # the check before the TPROXY delivery).
+        _sysctl_set("net.ipv4.ip_forward", "1")
+        _sysctl_set("net.ipv4.conf.all.rp_filter", "0")
+        # rp_filter on a new interface inherits from .default; setting it
+        # to 0 here guarantees the veth created below starts with the
+        # filter disabled. (The kernel takes max(conf.all, conf.<if>)
+        # when deciding, so setting only `all` isn't enough if `default`
+        # is 1 and the interface inherits that.)
+        _sysctl_set("net.ipv4.conf.default.rp_filter", "0")
         # Network namespace for the "external" manager.
         _run(["ip", "netns", "add", _NS])
         undo.append(["ip", "netns", "del", _NS])
@@ -197,6 +238,9 @@ def transparent_proxy_network():
         # veth pair — one end in host, the other in the netns.
         _run(["ip", "link", "add", _VH, "type", "veth", "peer", "name", _VM])
         undo.append(["ip", "link", "del", _VH])
+        # Belt-and-braces: force the veth interface itself to rp_filter=0
+        # now that it exists, in case its inheritance already picked a 1.
+        _run_quiet(["sysctl", "-w", f"net.ipv4.conf.{_VH}.rp_filter=0"])
 
         _run(["ip", "link", "set", _VM, "netns", _NS])
 
@@ -359,6 +403,27 @@ def transparent_proxy_stack(
 # Test
 
 
+def _diagnostic_dump(stack: dict) -> str:
+    """Capture kernel-side state the test depends on so a failure message
+    carries enough info to triage without re-running (teardown runs
+    immediately after, so this is our only window)."""
+    def _grab(cmd):
+        r = _run_quiet(cmd)
+        return f"$ {' '.join(cmd)}\n{r.stdout}{r.stderr}".rstrip()
+    parts = [
+        _grab(["iptables", "-t", "mangle", "-L", "PREROUTING", "-v", "-n", "-x"]),
+        _grab(["ip", "rule", "show"]),
+        _grab(["ip", "route", "show", "table", str(_TABLE)]),
+        _grab(["sysctl",
+               "net.ipv4.ip_forward",
+               "net.ipv4.conf.all.rp_filter",
+               "net.ipv4.conf.default.rp_filter",
+               f"net.ipv4.conf.{_VH}.rp_filter"]),
+        _grab(["ss", "-lun", "-p"]),
+    ]
+    return "\n\n".join(parts)
+
+
 def test_transparent_proxy_forwards_query_from_virtual_ip(
     transparent_proxy_stack: dict,
 ):
@@ -386,6 +451,8 @@ def test_transparent_proxy_forwards_query_from_virtual_ip(
             f"  rc={result.returncode}\n"
             f"  stdout={result.stdout!r}\n"
             f"  stderr={result.stderr!r}\n"
+            f"--- kernel-side diagnostics ---\n"
+            f"{_diagnostic_dump(stack)}\n"
             f"--- server log tail ---\n"
             f"{stack['server_log'].read_text(errors='replace')[-3000:]}"
         )
