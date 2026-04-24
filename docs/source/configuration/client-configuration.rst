@@ -430,6 +430,11 @@ Example:
       snmp-peer-id: 101
     }
 
+.. seealso::
+
+   The routing-map references this ID via
+   `using-snmp-peer-id-list-client-option`_.
+
 .. _plugin-options-client-chapter:
 
 Plugin options
@@ -499,6 +504,11 @@ Example:
 
       plugin-id: logger
     }
+
+.. seealso::
+
+   The routing-map references this ID via
+   `using-plugin-id-list-client-option`_.
 
 .. _trunking-options-client-chapter:
 
@@ -597,6 +607,16 @@ This option can contain :ref:`SNMP macros <snmp-macros>`.
         trunk-id: <discover>
       }
     }
+
+.. seealso::
+
+   Related options: `trunk-bind-address-client-option`_,
+   `trunk-peer-address-client-option`_,
+   `trunk-connection-mode-client-option`_,
+   `trunk-crypto-key-client-option`_,
+   `trunk-ping-period-client-option`_.
+   The routing-map references this ID via
+   `matching-trunk-id-list-client-option`_.
 
 .. _matching-snmp-properties-client-chapter:
 
@@ -730,6 +750,14 @@ Example:
       server-snmp-entity-id: snmpv1-manager-at-localhost
     }
 
+.. seealso::
+
+   Aggregates the ``server-snmp-*-pattern`` options immediately above
+   (engine-id, transport-domain, peer-address, bind-address, the
+   three security-* patterns, the two context-* patterns, pdu-type,
+   oid-prefix). The routing-map references this ID via
+   `matching-server-snmp-entity-id-list-client-option`_.
+
 .. _matching-server-classification-client-chapter:
 
 Matching server classification
@@ -793,6 +821,15 @@ Example:
 
       server-classification-id: customers-2017
     }
+
+.. seealso::
+
+   Aggregates the four ``server-snmp-*-id-pattern`` options immediately
+   above, which match the server's own classifier outcomes
+   (`snmp-credentials-id-server-option`_, `snmp-context-id-server-option`_,
+   `snmp-content-id-server-option`_, `snmp-peer-id-server-option`_).
+   The routing-map references this ID via
+   `matching-server-classification-id-list-client-option`_.
 
 .. _message-routing-client-chapter:
 
@@ -867,3 +904,12 @@ Example:
         using-snmp-peer-id-list: backend-agent-A
       }
     }
+
+.. seealso::
+
+   Individual match keys are defined by
+   `trunk-id-client-option`_,
+   `server-snmp-entity-id-client-option`_,
+   `server-classification-id-client-option`_;
+   a matching route then selects one or more
+   `plugin-id-client-option`_ / `snmp-peer-id-client-option`_ targets.

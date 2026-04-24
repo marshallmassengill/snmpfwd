@@ -72,6 +72,13 @@ Unless *--daemonize* option is given, the daemon will remain an interactive proc
 With the *-daemonize* option, the daemon will detach itself from user terminal,
 close down standard I/O streams etc.
 
+.. seealso::
+
+   `--pid-file <pid_file_cli_option>`_ to write the forked PID to disk,
+   `--process-user <process_user_cli_option>`_ /
+   `--process-group <process_group_cli_option>`_ to drop root
+   privileges after binding.
+
 .. _process_user_cli_option:
 .. _process_group_cli_option:
 
@@ -96,6 +103,10 @@ can be used for killing or restarting the process.
 
 The *--pid-file** option can be used to specify a disk file where daemon
 would store its PID.
+
+.. seealso::
+
+   Usually set alongside `--daemonize <daemonize_cli_option>`_.
 
 .. _logging_method_cli_option:
 
@@ -174,6 +185,11 @@ The *null* logging method completely inhibits all daemon logging.
 
 The *--log-level* option limits the minimum severity of the log messages
 to actually log.
+
+.. seealso::
+
+   The sink(s) to write to are selected with
+   `--logging-method <logging_method_cli_option>`_.
 
 Recognized log levels are:
 

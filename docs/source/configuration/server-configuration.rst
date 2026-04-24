@@ -359,6 +359,11 @@ Example:
       snmp-credentials-id: snmpv3-agent-at-localhost
     }
 
+.. seealso::
+
+   The routing-map references this ID via
+   `matching-snmp-credentials-id-list-server-option`_.
+
 .. _plugin-options-server-chapter:
 
 Plugin options
@@ -428,6 +433,11 @@ Example:
 
       plugin-id: logger
     }
+
+.. seealso::
+
+   The routing-map references this ID via
+   `using-plugin-id-list-server-option`_.
 
 
 .. _trunking-options-server-chapter:
@@ -526,6 +536,16 @@ clients.
       }
     }
 
+.. seealso::
+
+   Related options: `trunk-bind-address-server-option`_,
+   `trunk-peer-address-server-option`_,
+   `trunk-connection-mode-server-option`_,
+   `trunk-crypto-key-server-option`_,
+   `trunk-ping-period-server-option`_.
+   The routing-map references this ID via
+   `using-trunk-id-list-server-option`_.
+
 .. _snmp-context-matching-server-chapter:
 
 SNMP context matching
@@ -538,12 +558,20 @@ SNMP context matching
 
 A regular expression matching SNMPv3 messages by SNMP context engine ID.
 
+.. seealso::
+
+   Aggregated by `snmp-context-id-server-option`_.
+
 .. _snmp-context-name-pattern-server-option:
 
 *snmp-context-name-pattern*
 +++++++++++++++++++++++++++
 
 A regular expression matching SNMPv3 messages by SNMP context name.
+
+.. seealso::
+
+   Aggregated by `snmp-context-id-server-option`_.
 
 .. _snmp-context-id-server-option:
 
@@ -569,6 +597,11 @@ Example:
       snmp-context-id: any-context
     }
 
+.. seealso::
+
+   The routing-map references this ID via
+   `matching-snmp-context-id-list-server-option`_.
+
 .. _snmp-pdu-contents-matching-server-chapter:
 
 SNMP PDU contents matching
@@ -591,12 +624,20 @@ Recognized PDU types are: *GET*, *SET*, *GETNEXT*, *GETBULK*, *TRAPv1*,
       snmp-content-id: get-content
     }
 
+.. seealso::
+
+   Aggregated by `snmp-content-id-server-option`_.
+
 .. _snmp-pdu-oid-prefix-pattern-list-server-option:
 
 *snmp-pdu-oid-prefix-pattern-list*
 ++++++++++++++++++++++++++++++++++
 
 List of regular expressions matching OIDs in SNMP PDU var-binds.
+
+.. seealso::
+
+   Aggregated by `snmp-content-id-server-option`_.
 
 .. _snmp-content-id-server-option:
 
@@ -630,6 +671,11 @@ Example:
       }
     }
 
+.. seealso::
+
+   The routing-map references this ID via
+   `matching-snmp-content-id-list-server-option`_.
+
 .. _network-peers-matching-server-chapter:
 
 Network peers matching
@@ -642,6 +688,10 @@ Network peers matching
 
 List of regular expressions matching source transport endpoints
 of SNMP message.
+
+.. seealso::
+
+   Aggregated by `snmp-peer-id-server-option`_.
 
 .. _snmp-bind-address-pattern-list-server-option:
 
@@ -656,6 +706,10 @@ of SNMP message.
     If you want to receive SNMP messages at secondary network interfaces
     and be able to match them, make sure you enable the
     `snmp-transport-options-server-option`_ = *virtual-interface*.
+
+.. seealso::
+
+   Aggregated by `snmp-peer-id-server-option`_.
 
 .. _snmp-peer-id-server-option:
 
@@ -680,6 +734,11 @@ Example:
 
       snmp-peer-id: 101
     }
+
+.. seealso::
+
+   The routing-map references this ID via
+   `matching-snmp-peer-id-list-server-option`_.
 
 .. _message-routing-server-chapter:
 
@@ -765,3 +824,13 @@ Example:
         using-trunk-id-list: clienttrunk
       }
     }
+
+.. seealso::
+
+   Individual match keys are defined by
+   `snmp-credentials-id-server-option`_,
+   `snmp-context-id-server-option`_,
+   `snmp-content-id-server-option`_,
+   `snmp-peer-id-server-option`_;
+   a matching route then selects one or more
+   `plugin-id-server-option`_ / `trunk-id-server-option`_ targets.
