@@ -12,6 +12,19 @@ Fixes:
   `decryptionError: Ciphering services not available or ciphertext
   is broken`. v2c-only deployments were unaffected. No user-visible
   API change — the fix is to make the dep explicit.
+- snmpfwd-server / snmpfwd-client now exit with rc=1 on every
+  config-error path. Previously the console-script entry point's
+  `sys.exit(main())` received `None` from main() on any early
+  `return` (missing config file, program-name mismatch,
+  config-version mismatch, duplicate snmp-peer-id, unparseable
+  config, plugin load failure, etc.), which `sys.exit(None)`
+  turns into rc=0 — a silent success as far as systemd or any
+  other process manager was concerned. Refactored each script's
+  `main()` into an outer wrapper that catches KeyboardInterrupt
+  (graceful shutdown, rc=0) / Exception (traceback, rc=1) /
+  normal return (error path, rc=1) and a renamed `_run()`
+  holding the existing body. Error messages continue to appear
+  in the log as before; the only visible change is the exit code.
 
 Tests:
 - tests/integration/test_snmpv3.py: end-to-end SNMPv3 (USM, SHA auth
@@ -28,6 +41,10 @@ Tests:
   (c) snmpget against a client pointed at a dead backend port fails
   with a clean net-snmp `Timeout` within the configured retry
   budget and the proxy processes remain responsive afterwards.
+- tests/integration/test_bad_config.py (new): non-zero exit code
+  on missing config file / unparseable config / program-name
+  mismatch / config-version mismatch / duplicate snmp-peer-id.
+  Surfaces the silent-rc=0 bug the main() refactor above fixes.
 
 
 Revision 0.5.1, released 23-04-2026

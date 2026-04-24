@@ -76,7 +76,7 @@ def _inform_ack_cb(*args, **kwargs):
     pass
 
 
-def main():
+def _run():
 
     class CommandResponder(cmdrsp.CommandResponderBase):
         SUPPORTED_PDU_TYPES = (rfc1905.SetRequestPDU.tagSet,
@@ -964,20 +964,31 @@ def main():
     bootstrap.run_dispatcher_loop(args, transportDispatcher)
 
 
-if __name__ == '__main__':
+def main():
+    """Entry point for both the console-script (`snmpfwd-server`) and
+    direct `python -m` invocation. Wraps `_run()` so that:
+
+    - graceful shutdown (run_dispatcher_loop raising KeyboardInterrupt)
+      surfaces as rc=0;
+    - any normal return from `_run()` means an error path was taken
+      (the dispatcher loop never returns normally — it only raises)
+      and becomes rc=1, not the rc=0 that `sys.exit(main())` would
+      otherwise yield when main() returns None. Systemd-style process
+      managers rely on the non-zero to decide whether to alert
+      / restart, and snmpfwd used to exit 0 on every config error.
+    """
     rc = 1
-
     try:
-        main()
-
+        _run()
     except KeyboardInterrupt:
         log.info('shutting down process...')
         rc = 0
-
     except Exception:
         for line in traceback.format_exception(*sys.exc_info()):
             log.error(line.replace('\n', ';'))
-
     log.info('process terminated')
+    return rc
 
-    sys.exit(rc)
+
+if __name__ == '__main__':
+    sys.exit(main())
