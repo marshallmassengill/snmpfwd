@@ -276,10 +276,13 @@ def transparent_proxy_network():
               "ip", "route", "add", "default", "via", _HOST_IP])
 
         # TPROXY rule: packets from the manager netns destined to the
-        # virtual IP on UDP/161 get marked and delivered to snmpfwd-server
-        # on the host.
+        # virtual IP on UDP/161 (snmp commands) or UDP/162 (traps /
+        # informs) get marked and delivered to snmpfwd-server on the
+        # host. A single TPROXY --on-port is fine because snmpfwd binds
+        # one socket that handles both command and notification PDUs at
+        # runtime via pysnmp's dispatcher.
         tproxy_rule = [
-            "-p", "udp", "--dport", "161",
+            "-p", "udp", "-m", "multiport", "--dports", "161,162",
             "-d", _VIRTUAL_IP,
             "-j", "TPROXY",
             "--tproxy-mark", _TPROXY_MASK,
@@ -458,26 +461,33 @@ def _diagnostic_dump(stack: dict) -> str:
     return "\n\n".join(parts)
 
 
-def test_transparent_proxy_forwards_query_from_virtual_ip(
-    transparent_proxy_stack: dict,
+@pytest.mark.parametrize("op, extra_args", [
+    pytest.param("snmpget",     ["1.3.6.1.2.1.1.1.0"],               id="get"),
+    pytest.param("snmpgetnext", ["1.3.6.1.2.1.1.1"],                 id="getnext"),
+    pytest.param("snmpbulkget", ["-Cn0", "-Cr3", "1.3.6.1.2.1.1"],   id="bulkget"),
+    pytest.param("snmpwalk",    ["1.3.6.1.2.1.1"],                   id="walk"),
+])
+def test_transparent_proxy_forwards_command_from_virtual_ip(
+    transparent_proxy_stack: dict, op: str, extra_args: list,
 ):
-    """snmpget from inside the manager netns to the virtual destination
-    192.0.2.100:161 must be TPROXY-intercepted into snmpfwd-server,
-    forwarded through the trunk to snmpfwd-client, and answered by the
-    backend snmpd. The response must return to the manager — which
-    implicitly verifies that the server socket's IP_TRANSPARENT set the
-    outgoing source IP back to 192.0.2.100 (otherwise net-snmp's client
-    rejects the response as from an unexpected peer)."""
+    """An SNMP command PDU (GET / GETNEXT / GETBULK / WALK) issued from
+    inside the manager netns to the virtual destination 198.51.100.100:161
+    must be TPROXY-intercepted into snmpfwd-server, forwarded through the
+    trunk to snmpfwd-client, and answered by the backend snmpd. Reply
+    returning to the manager proves the full round-trip is intact for
+    the PDU type under test."""
     stack = transparent_proxy_stack
+    if shutil.which(op) is None:
+        pytest.skip(f"{op} not on PATH")
     result = subprocess.run(
         [
             "ip", "netns", "exec", stack["ns"],
-            "snmpget", "-v2c", "-c", "public", "-On",
+            op, "-v2c", "-c", "public", "-On",
             "-t", "3", "-r", "0",
             f"{stack['virtual_ip']}:161",
-            "1.3.6.1.2.1.1.1.0",
+            *extra_args,
         ],
-        capture_output=True, text=True, timeout=10,
+        capture_output=True, text=True, timeout=15,
     )
     if result.returncode != 0:
         # If the user set SNMPFWD_TPROXY_TEST_KEEP=1, pause before
@@ -517,14 +527,15 @@ def test_transparent_proxy_forwards_query_from_virtual_ip(
             f"{stack['server_log'].read_text(errors='replace')[-3000:]}"
         )
 
-    # The reply line includes the OID we queried and a non-empty value.
-    assert "1.3.6.1.2.1.1.1.0" in result.stdout, result.stdout
-    assert "STRING" in result.stdout.upper() or "=" in result.stdout, result.stdout
+    # Every command type's reply set touches at least one OID under the
+    # system group (1.3.6.1.2.1.1.*) — get/getnext/bulkget/walk all
+    # land there because that's what we queried.
+    assert ".1.3.6.1.2.1.1." in result.stdout, result.stdout
+    assert "=" in result.stdout, result.stdout
 
     # Cross-check the forwarding path via the server log: it should
     # record a "received SNMP message, forwarded as trunk message"
-    # line carrying the snmpget's source IP (the netns manager) and
-    # the queried OID.
+    # line carrying the snmpget's source IP (the netns manager).
     server_log = stack["server_log"].read_text(errors="replace")
     assert "received SNMP message, forwarded as trunk message" in server_log, (
         f"server never logged an inbound forward; log tail:\n{server_log[-2000:]}"
@@ -544,3 +555,150 @@ def test_transparent_proxy_forwards_query_from_virtual_ip(
     # upstream (or we monkey-patch), the bind address logged under
     # transparent-proxy reflects the socket's wildcard bind (0.0.0.0)
     # rather than the per-packet original destination.
+
+
+# ---------------------------------------------------------------------------
+# Trap / INFORM forwarding under transparent-proxy
+
+
+@pytest.fixture
+def transparent_proxy_trap_stack(
+    tmp_path: Path,
+    transparent_proxy_network: dict,
+    snmptrapd_backend,   # from tests/integration/conftest.py
+) -> Iterator[dict]:
+    """Same topology as `transparent_proxy_stack`, but with snmptrapd as
+    the backend so we can exercise TRAPv2 / INFORM PDUs through the
+    TPROXY chain. Uses the plain CLIENT_CONF — snmpfwd-client routes
+    notifications through `notificationOriginator.send_pdu` and commands
+    through `commandGenerator.send_pdu` at runtime based on the PDU's
+    tagSet, so the same config handles both paths."""
+    trunk_port = free_tcp_port()
+    engine_id = f"0x01{random.randrange(0, 2**56):014x}"
+    snmpfwd_port = transparent_proxy_network["snmpfwd_port"]
+
+    server_conf = tmp_path / "server.conf"
+    client_conf = tmp_path / "client.conf"
+    server_conf.write_text(render_server_tproxy_conf(
+        snmp_listen_port=snmpfwd_port,
+        snmp_engine_id=engine_id,
+        listen_community="public",
+        trunk_port=trunk_port,
+    ))
+    client_conf.write_text(render_client_conf(
+        snmp_engine_id=engine_id,
+        backend_community=snmptrapd_backend.community,
+        backend_port=snmptrapd_backend.port,
+        trunk_port=trunk_port,
+    ))
+
+    server_bin = shutil.which("snmpfwd-server")
+    client_bin = shutil.which("snmpfwd-client")
+    if server_bin is None or client_bin is None:
+        pytest.skip("snmpfwd-server / snmpfwd-client not on PATH")
+
+    server_log = tmp_path / "snmpfwd-server.log"
+    client_log = tmp_path / "snmpfwd-client.log"
+
+    client_proc = spawn_supervised(
+        name="snmpfwd-client",
+        cmd=[
+            client_bin,
+            f"--config-file={client_conf}",
+            f"--logging-method=file:{client_log}",
+            "--log-level=debug",
+        ],
+        log_path=tmp_path / "snmpfwd-client.stdouterr.log",
+        ready=lambda: tcp_port_open("127.0.0.1", trunk_port),
+        ready_timeout=15.0,
+    )
+    server_proc = None
+    try:
+        server_proc = spawn_supervised(
+            name="snmpfwd-server",
+            cmd=[
+                server_bin,
+                f"--config-file={server_conf}",
+                f"--logging-method=file:{server_log}",
+                "--log-level=debug",
+            ],
+            log_path=tmp_path / "snmpfwd-server.stdouterr.log",
+            ready=lambda: log_contains(server_log, "client is now connected"),
+            ready_timeout=15.0,
+        )
+        yield {
+            "ns": transparent_proxy_network["ns"],
+            "virtual_ip": transparent_proxy_network["virtual_ip"],
+            "server_log": server_log,
+            "client_log": client_log,
+            "snmptrapd_log": snmptrapd_backend.log_path,
+        }
+    finally:
+        if server_proc is not None:
+            server_proc.terminate()
+        client_proc.terminate()
+
+
+# A small, easy-to-spot trap OID so snmptrapd's log makes it obvious
+# whether the trap reached the backend. 1.3.6.1.4.1.99999.1.2 is inside
+# the documentation-style enterprise range snmpfwd already uses for its
+# metrics MIB, so nothing real will collide.
+_TEST_TRAP_OID = "1.3.6.1.4.1.99999.1.2.0.1"
+
+
+@pytest.mark.parametrize("op", [
+    pytest.param("snmptrap",   id="trapv2"),
+    pytest.param("snmpinform", id="inform"),
+])
+def test_transparent_proxy_forwards_notification_from_virtual_ip(
+    transparent_proxy_trap_stack: dict, op: str,
+):
+    """SNMPv2 TRAP and INFORM PDUs must traverse the same TPROXY chain
+    and land in the backend snmptrapd's log."""
+    stack = transparent_proxy_trap_stack
+    if shutil.which(op) is None:
+        pytest.skip(f"{op} not on PATH")
+
+    # snmptrap / snmpinform args:
+    #   <uptime> <trap-oid> [varbind ...]
+    # We pass an empty uptime (net-snmp interprets "" as 0) and a
+    # marker varbind net-snmp will dump verbatim into snmptrapd's log.
+    marker_varbind = [
+        "1.3.6.1.2.1.1.1.0", "s", f"tproxy-{op}-marker",
+    ]
+    result = subprocess.run(
+        [
+            "ip", "netns", "exec", stack["ns"],
+            op, "-v2c", "-c", "public",
+            "-t", "3", "-r", "0",
+            f"{stack['virtual_ip']}:162",
+            "",   # uptime
+            _TEST_TRAP_OID,
+            *marker_varbind,
+        ],
+        capture_output=True, text=True, timeout=15,
+    )
+    # snmptrap is fire-and-forget (rc 0, no stdout); snmpinform expects
+    # an ack from the proxy (which snmpfwd's Phase-3B flow synthesizes
+    # from the downstream ack) and returns non-zero on timeout.
+    assert result.returncode == 0, (
+        f"{op} failed rc={result.returncode} "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}\n"
+        f"--- server log ---\n"
+        f"{stack['server_log'].read_text(errors='replace')[-2000:]}"
+    )
+
+    # Give snmptrapd a beat to flush the log file (it's line-buffered
+    # but the kernel's socket buffer may delay by a hair).
+    deadline = time.monotonic() + 3.0
+    trap_log_text = ""
+    while time.monotonic() < deadline:
+        trap_log_text = stack["snmptrapd_log"].read_text(errors="replace")
+        if _TEST_TRAP_OID in trap_log_text or "tproxy-" in trap_log_text:
+            break
+        time.sleep(0.1)
+
+    assert "tproxy-" in trap_log_text or _TEST_TRAP_OID in trap_log_text, (
+        f"snmptrapd never logged the {op!r} marker; log:\n"
+        f"{trap_log_text[-2000:]}"
+    )
