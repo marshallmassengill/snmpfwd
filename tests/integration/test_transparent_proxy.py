@@ -64,6 +64,7 @@ import os
 import random
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Iterator
@@ -414,7 +415,11 @@ def _diagnostic_dump(stack: dict) -> str:
     ns = stack["ns"]
     parts = [
         # Host-side netfilter + routing state for the TPROXY path.
-        _grab(["iptables", "-t", "mangle", "-L", "PREROUTING", "-v", "-n", "-x"]),
+        _grab(["iptables", "-t", "mangle", "-L", "-v", "-n", "-x"]),
+        _grab(["iptables", "-t", "raw", "-L", "-v", "-n", "-x"]),
+        _grab(["iptables", "-t", "filter", "-L", "-v", "-n", "-x"]),
+        _grab(["iptables", "-t", "nat", "-L", "-v", "-n", "-x"]),
+        _grab(["nft", "list", "ruleset"]),   # nft may or may not be present
         _grab(["ip", "rule", "show"]),
         _grab(["ip", "route", "show", "table", str(_TABLE)]),
         _grab(["sysctl",
@@ -457,6 +462,22 @@ def test_transparent_proxy_forwards_query_from_virtual_ip(
         capture_output=True, text=True, timeout=10,
     )
     if result.returncode != 0:
+        # If the user set SNMPFWD_TPROXY_TEST_KEEP=1, pause before
+        # teardown so they can poke the live state (tcpdump on sfv-h,
+        # manual snmpget from the netns, etc.) in another terminal.
+        keep = os.environ.get("SNMPFWD_TPROXY_TEST_KEEP") == "1"
+        if keep:
+            sys.stderr.write(
+                f"\n*** SNMPFWD_TPROXY_TEST_KEEP=1: leaving netns {_NS!r}, "
+                f"veth {_VH}/{_VM}, iptables rule and ip rules in place for "
+                f"60s so you can inspect (e.g. "
+                f"`sudo tcpdump -n -i {_VH} udp` + "
+                f"`sudo ip netns exec {_NS} snmpget -v2c -c public "
+                f"{_VIRTUAL_IP}:161 1.3.6.1.2.1.1.1.0`). ***\n"
+            )
+            sys.stderr.flush()
+            time.sleep(60)
+
         pytest.fail(
             "snmpget failed:\n"
             f"  rc={result.returncode}\n"
