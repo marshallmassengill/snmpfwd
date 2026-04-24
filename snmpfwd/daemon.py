@@ -84,6 +84,11 @@ else:
         os.dup2(se.fileno(), sys.stderr.fileno())
 
 
+    # Print the "running as root without --process-user/--process-group"
+    # warning at most once per process, no matter how many PrivilegesOf
+    # blocks the bootstrap / run_dispatcher_loop opens.
+    _root_warning_emitted = False
+
     class PrivilegesOf(object):
 
         def __init__(self, uname, gname, final=False):
@@ -101,7 +106,20 @@ else:
                     return
             else:
                 if not self._uname or not self._gname:
-                    raise error.SnmpfwdError('Must drop privileges to a non-privileged user&group')
+                    # Root with no drop target: keep running as root rather
+                    # than exiting silently (previously this raised
+                    # SnmpfwdError, which main() caught with `return`, and
+                    # the console-script entry point's `sys.exit(main())`
+                    # turned that into a silent rc=0 — very hard to debug).
+                    global _root_warning_emitted
+                    if not _root_warning_emitted:
+                        sys.stderr.write(
+                            'snmpfwd: WARNING: running as root without '
+                            '--process-user / --process-group; keeping '
+                            'root privileges\n'
+                        )
+                        _root_warning_emitted = True
+                    return
 
             try:
                 runningUid = pwd.getpwnam(self._uname).pw_uid
