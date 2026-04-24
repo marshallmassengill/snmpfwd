@@ -135,7 +135,7 @@ If a run crashes hard and leaves state behind, the fixture's
 pre-setup cleanup removes it on the next attempt. To do it by hand::
 
     # Remove iptables TPROXY rules targeting the test virtual IP
-    iptables -t mangle -S PREROUTING | grep 192.0.2.100 | \
+    iptables -t mangle -S PREROUTING | grep 198.51.100.100 | \
         sed 's/^-A/-D/' | xargs -r -n1 iptables -t mangle
 
     # Remove policy-routing hooks

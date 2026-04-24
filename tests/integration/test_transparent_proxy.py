@@ -22,8 +22,8 @@ Topology::
      192.0.2.2 (sfv-m)               192.0.2.1   (sfv-h)
         |                                |
         | snmpget -c public              | iptables mangle PREROUTING:
-        |   192.0.2.100:161              |   -p udp --dport 161
-        |                                |   -d 192.0.2.100 -j TPROXY
+        |   198.51.100.100:161           |   -p udp --dport 161
+        |                                |   -d 198.51.100.100 -j TPROXY
         v                                |   --tproxy-mark 0x1/0x1
                                          |   --on-port <snmpfwd-port>
                                          |
@@ -41,11 +41,18 @@ Topology::
                                          v
                                 snmpd :: 127.0.0.1:<backend_port>
 
+The virtual IP (198.51.100.100) deliberately lives in a DIFFERENT
+subnet from the veth link (192.0.2.0/24). If both were in the same
+subnet, the netns's connected route would claim the virtual IP as
+on-link, ARP-resolve it, get no reply, and drop the packet before it
+ever reaches the host.
+
 Prerequisites to run:
   - root (needed for iptables, ip netns, ip rule/route, IP_TRANSPARENT).
   - iptables, ip (iproute2), snmpd, snmpget, snmpfwd-server,
     snmpfwd-client. The test skips cleanly if any are missing.
-  - 192.0.2.0/24 not in use locally (it's TEST-NET-1, documentation-only).
+  - 192.0.2.0/24 and 198.51.100.0/24 not in use locally (TEST-NET-1
+    and TEST-NET-2, documentation-reserved).
 
 How to run (from the repo root, with snmpfwd installed into a venv):
 
@@ -123,9 +130,20 @@ pytestmark = [
 _NS = "snmpfwd-tp-mgr"
 _VH = "sfv-h"
 _VM = "sfv-m"
+# 192.0.2.0/24 = TEST-NET-1 (RFC 5737), 198.51.100.0/24 = TEST-NET-2.
+# Both are documentation-reserved so neither will collide with real
+# routes on a dev host.
+#
+# _HOST_IP / _MGR_IP share TEST-NET-1 and are the point-to-point link
+# between the host and the netns. _VIRTUAL_IP lives in TEST-NET-2 —
+# importantly a DIFFERENT subnet from the link — so the netns sees it
+# as off-link and routes it via the default gateway (the host). If
+# _VIRTUAL_IP sat inside 192.0.2.0/24 the netns would treat it as
+# link-local and ARP for the virtual IP itself, which nobody answers,
+# so the packet never reaches the host's mangle PREROUTING.
 _HOST_IP = "192.0.2.1"
 _MGR_IP = "192.0.2.2"
-_VIRTUAL_IP = "192.0.2.100"
+_VIRTUAL_IP = "198.51.100.100"
 _FWMARK = "0x1"
 _TABLE = "100"
 _TPROXY_MASK = "0x1/0x1"
@@ -467,7 +485,7 @@ def test_transparent_proxy_forwards_query_from_virtual_ip(
         # manual snmpget from the netns, etc.) in another terminal.
         keep = os.environ.get("SNMPFWD_TPROXY_TEST_KEEP") == "1"
         if keep:
-            sys.stderr.write(
+            banner = (
                 f"\n*** SNMPFWD_TPROXY_TEST_KEEP=1: leaving netns {_NS!r}, "
                 f"veth {_VH}/{_VM}, iptables rule and ip rules in place for "
                 f"60s so you can inspect (e.g. "
@@ -475,7 +493,17 @@ def test_transparent_proxy_forwards_query_from_virtual_ip(
                 f"`sudo ip netns exec {_NS} snmpget -v2c -c public "
                 f"{_VIRTUAL_IP}:161 1.3.6.1.2.1.1.1.0`). ***\n"
             )
-            sys.stderr.flush()
+            # pytest captures stderr by default so `sys.stderr.write` is
+            # invisible until the test completes — which is after the
+            # sleep, defeating the purpose. Write directly to the
+            # controlling tty so it's visible immediately.
+            try:
+                with open("/dev/tty", "w") as tty:
+                    tty.write(banner)
+                    tty.flush()
+            except OSError:
+                sys.stderr.write(banner)
+                sys.stderr.flush()
             time.sleep(60)
 
         pytest.fail(
